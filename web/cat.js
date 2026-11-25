@@ -226,14 +226,51 @@
   }
   const toeGeo = new THREE.PlaneGeometry(0.03, 0.34);
   toeGeo.rotateX(-Math.PI / 2);
-  // The sole faces down: one round main pad towards the heel and four beans in an arc towards the
-  // toes, each set just outside the curved underside.
-  const padGeo = new THREE.CircleGeometry(1, 20);
-  padGeo.rotateX(Math.PI / 2);
-  const PADS = [[0, -0.18, 0.4, 0.32], [-0.6, 0.3, 0.17, 0.2], [-0.22, 0.56, 0.17, 0.2], [0.22, 0.56, 0.17, 0.2], [0.6, 0.3, 0.17, 0.2]];
-  function placePawPad(pad, x, z) {
-    pad.position.set(x * (1 + 0.12 * z), -0.45 * Math.sqrt(Math.max(0, 1 - x * x - z * z)) - 0.012, z);
+  // One lobed heel pad and four toe pads, with the smaller outer toes angled outwards.
+  const PAD_SEGMENTS = 28;
+  const heelPad = new THREE.Shape();
+  heelPad.moveTo(0, 0.22);
+  heelPad.bezierCurveTo(-0.12, 0.22, -0.19, 0.34, -0.31, 0.21);
+  heelPad.bezierCurveTo(-0.40, 0.12, -0.46, -0.20, -0.39, -0.33);
+  heelPad.bezierCurveTo(-0.34, -0.45, -0.22, -0.46, -0.15, -0.41);
+  heelPad.bezierCurveTo(-0.09, -0.51, 0.09, -0.51, 0.15, -0.41);
+  heelPad.bezierCurveTo(0.22, -0.46, 0.34, -0.45, 0.39, -0.33);
+  heelPad.bezierCurveTo(0.46, -0.20, 0.40, 0.12, 0.31, 0.21);
+  heelPad.bezierCurveTo(0.19, 0.34, 0.12, 0.22, 0, 0.22);
+  const toePads = [
+    [-0.57, 0.35, 0.148, 0.181, -0.34],
+    [-0.205, 0.57, 0.153, 0.204, -0.12],
+    [0.205, 0.57, 0.153, 0.204, 0.12],
+    [0.57, 0.35, 0.148, 0.181, 0.34],
+  ];
+  const padOrigin = new THREE.Vector2();
+  const padOutlines = [
+    [0, -0.14, heelPad.getSpacedPoints(PAD_SEGMENTS)],
+    ...toePads.map(([x, z, width, length, angle]) => {
+      const outline = Array.from({ length: PAD_SEGMENTS + 1 }, (_, i) => {
+        const t = i * 2 * Math.PI / PAD_SEGMENTS;
+        const taper = 1 - 0.14 * Math.sin(t);
+        return new THREE.Vector2(width * taper * Math.cos(t), length * Math.sin(t))
+          .rotateAround(padOrigin, -angle);
+      });
+      return [x, z, outline];
+    }),
+  ];
+  function solePadGeometry([x, z, outline], direction) {
+    // Subdivide the interior so it follows the curved sole as closely as the edge does.
+    const geo = new THREE.RingGeometry(0, 1, PAD_SEGMENTS, 4);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const radius = Math.hypot(pos.getX(i), pos.getY(i));
+      const edge = outline[i % outline.length];
+      const px = (x + radius * edge.x) * direction, pz = (z + radius * edge.y) * direction;
+      const sole = -0.45 * Math.sqrt(1 - px * px - pz * pz);
+      pos.setXYZ(i, px * (1 + 0.12 * pz), sole - 0.014, pz);
+    }
+    return geo;
   }
+  const padGeos = padOutlines.map(outline => solePadGeometry(outline, 1));
+  const reversePadGeos = padOutlines.map(outline => solePadGeometry(outline, -1));
   function makePaw(parent, order) {
     const shape = pawGeo.clone();
     const paw = new THREE.Mesh(shape, pawMat);
@@ -248,10 +285,8 @@
       paw.add(toe);
       return toe;
     });
-    const pads = PADS.map(([x, z, rx, rz]) => {
-      const pad = new THREE.Mesh(padGeo.clone(), padMat);
-      placePawPad(pad, x, z);
-      pad.scale.set(rx, 1, rz);
+    const pads = padGeos.map(geo => {
+      const pad = new THREE.Mesh(geo.clone(), padMat);
       pad.renderOrder = order + 3;
       paw.add(pad);
       return pad;
@@ -297,11 +332,8 @@
       crease.position.set(i === 0 ? -0.3 : 0.3, 0.66, 0.72);
       bendPawMark(crease, toeGeo.attributes.position, amount, direction);
     });
-    data.pads.forEach((pad, i) => {
-      const [x, z] = PADS[i];
-      placePawPad(pad, x * direction, z * direction);
-      bendPawMark(pad, padGeo.attributes.position, amount, direction);
-    });
+    const soles = direction < 0 ? reversePadGeos : padGeos;
+    data.pads.forEach((pad, i) => bendPawMark(pad, soles[i].attributes.position, amount, direction));
     data.clench = amount;
     data.padDirection = direction;
   }
@@ -659,6 +691,7 @@
 
   // Eyes sit on the face surface and face along its normal.
   const disc = new THREE.CircleGeometry(1, 36);
+  const dizzyEyeMat = new THREE.MeshBasicMaterial({ map: K.fxTexture('dizzyEye'), depthTest: false, transparent: true });
   const eyes = [-1, 1].map(s => {
     const lx = s * 0.235, ly = 0.04;
     const lz = R.z * Math.sqrt(Math.max(0, 1 - (lx / R.x) ** 2 - (ly / R.y) ** 2));
@@ -684,14 +717,19 @@
     }
     const arc = new K.TaperTube(16, 6, lidMat, 11);
     arc.mesh.visible = false;
-    g.add(iris, pupil, shine, arc.mesh);
+    const spiral = new THREE.Mesh(disc, dizzyEyeMat);
+    spiral.scale.set(0.16, 0.16, 1);
+    spiral.position.z = 0.004;
+    spiral.renderOrder = 12;
+    spiral.visible = false;
+    g.add(iris, pupil, shine, arc.mesh, spiral);
     const blush = new THREE.Mesh(disc, blushMat);
     blush.scale.set(0.085, 0.048, 1);
     blush.position.set(s * 0.06, -0.15, 0.001);
     blush.renderOrder = 10;
     g.add(blush);
     head.add(g);
-    const eye = { s, group: g, iris, pupil, shine, arc: arc.mesh, lid: arc, lidK: 0 };
+    const eye = { s, group: g, iris, pupil, shine, arc: arc.mesh, spiral, lid: arc, lidK: 0 };
     setLid(eye, 1);
     return eye;
   });
@@ -999,7 +1037,7 @@
     return best;
   }
 
-  function updateArm(arm, pawPos, hang = 0, elbow = null, aim = null, clench = 0) {
+  function updateArm(arm, pawPos, hang = 0, elbow = null, aim = null, clench = 0, keyPose = 0) {
     attach(arm.shoulderLocal, arm.shoulder);
     arm.hand.copy(pawPos);
     const a = arm.shoulder, b = arm.hand;
@@ -1016,8 +1054,9 @@
     // a fairly straight arm out along them. A limp one (`hang` 1): the arm leaves the shoulder
     // level, or rises if the paw is up, and the forearm drops onto the paw from above, so a paw
     // over an edge hangs straight down off the wrist and one held over the chest flops over.
-    const w = lieAt(arm.shoulderLocal.y);
-    outlineOutside(arm.limb, w > 0.5, armRimMat, 19);
+    const bodyLie = lieAt(arm.shoulderLocal.y);
+    const w = bodyLie * (1 - keyPose);
+    outlineOutside(arm.limb, bodyLie > 0.5, armRimMat, 19);
     if (w > 0) {
       // Through the elbow (the pose's, or the two bones'), leaving the shoulder along the upper
       // arm and arriving along the forearm: control points 4/3 of the way to the elbow put the
@@ -1029,7 +1068,7 @@
     }
     // Sitting, a paw turned on purpose (held up to the mouth to wash) is reached from below: the
     // elbow comes forward off the chest and the forearm rises along the toes into the wrist.
-    const held = aim ? aim.k * (1 - w) : 0;
+    const held = aim ? aim.k * (1 - bodyLie) * (1 - keyPose) : 0;
     if (held > 0) {
       c1.z += 0.14 * held;
       c2.lerp(armC.copy(aim.toes).normalize().multiplyScalar(-0.32 * reach).add(b), held);

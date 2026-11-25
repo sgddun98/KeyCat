@@ -261,6 +261,26 @@ const K = {};
       g.closePath();
       g.fillStyle = '#fbfaf3'; g.fill();
       g.strokeStyle = '#1d1d1b'; g.lineWidth = 7; g.stroke();
+    } else if (kind === 'dizzyEye') {
+      g.beginPath();
+      g.arc(64, 64, 59, 0, Math.PI * 2);
+      g.fillStyle = '#fff1ca'; g.fill();
+      g.strokeStyle = '#38251d'; g.lineWidth = 5; g.stroke();
+      g.beginPath();
+      for (let i = 0; i <= 96; i++) {
+        const u = i / 96, angle = u * Math.PI * 4.5, r = 46 * u;
+        g.lineTo(64 + Math.cos(angle) * r, 64 + Math.sin(angle) * r);
+      }
+      g.lineWidth = 7; g.stroke();
+    } else if (kind === 'dizzyStar') {
+      g.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = i * Math.PI / 5 - Math.PI / 2, r = i % 2 ? 23 : 53;
+        g.lineTo(64 + Math.cos(a) * r, 64 + Math.sin(a) * r);
+      }
+      g.closePath();
+      g.fillStyle = '#ffd464'; g.fill();
+      g.strokeStyle = '#855524'; g.lineWidth = 7; g.stroke();
     } else if (kind === 'heart') {
       g.beginPath();
       g.moveTo(64, 108);
