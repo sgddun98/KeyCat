@@ -1,4 +1,4 @@
-// The 3D 60% keyboard and the mouse in front of the cat.
+// The 3D 60% keyboard, mouse and toys around the cat.
 // The cat faces the camera, so its keyboard is seen from the far side: the
 // space row is nearest the cat and the user's left-hand keys are on screen right.
 'use strict';
@@ -373,6 +373,48 @@
         s.tube.update((u, out) => out.set(s.x + Math.sin(u * 5 + t * 2 + s.phase) * 0.025 * u,
           cup.userData.top + rise + u * 0.2, 0), u => 0.012 * Math.sin(Math.PI * Math.min(1, u * 1.1 + 0.05)));
       }
+    },
+  };
+
+  // A ball of winding yarn, behind the right side of the keyboard.
+  const yarn = new THREE.Group(), yarnRadius = 0.155;
+  const yarnHome = V(0.94, 0.02 + yarnRadius, 0.31);
+  const yarnGeo = new THREE.SphereGeometry(yarnRadius - 0.008, 28, 16);
+  const yarnMaterials = [];
+  const yarnColor = material => {
+    material.transparent = true;
+    yarnMaterials.push(material);
+    return material;
+  };
+  const yarnRim = new THREE.Mesh(yarnGeo, yarnColor(K.back('#f6f3e8')));
+  yarnRim.scale.setScalar(1.14);
+  yarnRim.renderOrder = -1;
+  yarn.add(yarnRim, new THREE.Mesh(yarnGeo, yarnColor(K.flat('#b974a0'))));
+  // The strands wrap around different axes and rotate with the ball.
+  for (const [angle, color] of [[0.52, '#eaa9cd'], [-0.75, '#d48ab5'], [1.35, '#f2bfd9']]) {
+    const points = [];
+    for (let i = 0; i <= 120; i++) {
+      const u = i / 120, turn = u * Math.PI * 8;
+      const y = K.mix(-0.055, 0.055, u) + 0.008 * Math.sin(turn * 2);
+      const r = Math.sqrt(yarnRadius ** 2 - y * y);
+      points.push(V(r * Math.cos(turn), y, r * Math.sin(turn)));
+    }
+    const wrap = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 120, 0.008, 6), yarnColor(K.flat(color)));
+    wrap.rotation.set(0.55, angle * 0.45, angle);
+    yarn.add(wrap);
+  }
+  yarn.position.copy(yarnHome);
+  yarn.visible = false;
+  K.scene.add(yarn);
+  K.yarn = {
+    group: yarn,
+    home: yarnHome,
+    radius: yarnRadius,
+    opacity: 0,
+    setOpacity(a) {
+      this.opacity = a;
+      for (const m of yarnMaterials) m.opacity = a;
+      yarn.visible = a > 0.01;
     },
   };
 })();

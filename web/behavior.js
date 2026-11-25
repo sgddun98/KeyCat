@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const { V, mix, clamp, approach, smooth } = K;
-  const { camera, scene, renderer, keyboard, mouseProp, cat, cup, life, sound } = K;
+  const { camera, scene, renderer, keyboard, mouseProp, cat, cup, yarn, life, sound } = K;
   // In dev the clock can be frozen and stepped (`cat.freeze()` / `cat.step(s)`) to film motion frame by frame.
   let frozen = null;
   const now = () => frozen ?? performance.now() / 1000;
@@ -14,6 +14,7 @@
     role: 'both', persist: true, outfit: null };
   const S = {
     lastInput: now(), lastKey: -100, lastMouse: -100, mouseDown: false,
+    keyGaze: null,
     cursor: null, cursorSeen: -100, petting: false, petUntil: 0, petX: 0,
     sleep: 0, asleep: false, wakeAt: -100, nextBlink: now() + 3, nextZ: 0,
     rub: 0, busyUntil: now() + 2, lastPaw: 'R', hit: 'none',
@@ -29,14 +30,14 @@
     // recent [time, distance] samples for the pointer speed; `curiousUntil` keeps it watching a
     // while after the pointer stops.
     moves: [], mouseSpeed: 0, curiousUntil: -100,
-    // A longer scripted episode (push the cup, stretch, nudge, swat): { kind, t0, dur, ... }.
+    // A longer scripted episode (push the cup, play with yarn, stretch, nudge, swat): { kind, t0, dur, ... }.
     // Only one runs at a time; most end early on input.
-    scene: null, nextPush: now() + 90, nextNudge: 0, keysQuietSince: now(),
+    scene: null, nextPush: now() + 90, nextYarn: now() + 24, nextNudge: 0, keysQuietSince: now(),
     // Yawning runs alongside everything else, since it only moves the face.
     yawn: null, yawnAt: 0, stretchUntil: 0, nextNightYawn: now() + 60, nightSaidAt: 0,
-    // Lying down: where ('board', sprawled over the keys, is the only place), set when it lies down.
+    // Lying down: over the keys ('board') or beside them after a head rub ('cuddle').
     // `sleepPose` is picked on falling asleep: loaf, curl, tuck (paws tucked under) or board.
-    lieAt: 'board', sleepPose: 'loaf',
+    lieAt: 'board', sleepPose: 'loaf', cuddleUntil: 0,
     // Purring when petted (or, once you are close, when the pointer rests by its head).
     purr: 0, breath: 0, nextHeart: 0, rubCursor: false, lastPetDown: -100, blinkAskAt: 0,
     // Keyboard shortcuts it recognises.
@@ -68,6 +69,7 @@
     cross: new Spring(0, 1.6, 0.9),
     curious: new Spring(0, 3.5, 0.75),   // quick to light up, a slight overshoot reads as a start
     desk: new Spring(0, 9, 0.35),        // the desk hop when the tail slams down
+    impactRoll: new Spring(0, 5, 0.36),   // a quick shoulder recoil when Enter lands
     lie: new Spring(0, 1.5, 0.8),        // 0 sitting up, 1 lying on its side
     tailLie: new Spring(0, 1.4, 0.7),    // the tail flops down after the body
     melt: new Spring(0, 0.3, 1),         // lying, 0 still holding itself, 1 settled into the pose (see LIE)
@@ -145,11 +147,42 @@
         tail: [V(1.1, 0.58, -0.62), V(1.24, 0.8, -0.62), V(1.26, 1.04, -0.6), V(1.14, 1.2, -0.58), V(0.98, 1.17, -0.56)],
       },
     },
+    cuddle: {
+      lead: 0.12,
+      // Lowers onto its side, then settles face up with its paws relaxed.
+      loaf: {
+        path: [V(1.19, 0.49, -0.52), V(1.01, 0.51, -0.49), V(0.77, 0.51, -0.44), V(0.5, 0.48, -0.39),
+          V(0.18, 0.45, -0.30), V(-0.09, 0.43, -0.21), V(-0.32, 0.44, -0.13)],
+        side: [V(0, 0.94, -0.34), V(0, 0.96, -0.28)], kS: [0.96, 0.84], kF: [0.93, 0.82],
+        paws: [V(0.36, 0.18, 0.43), V(0.37, 0.80, 0.08)], hang: [0, 0],
+        aims: [{ toes: V(-0.8, 0.35, 0.15), top: V(0, 0.5, -1) }, { toes: V(-0.85, 0.4, -0.1), top: V(0, 0.2, -1) }],
+        hind: [
+          { knee: V(0.88, 0.3, 0.09), paw: V(0.98, 0.20, 0.34), toes: V(0.75, 0.1, 0.22), top: V(0, -0.34, -0.94) },
+          { knee: V(1.04, 0.64, -0.32), paw: V(1.21, 0.61, -0.08), toes: V(0.65, 0.22, 0.12), top: V(0, -0.34, -0.94) },
+        ],
+        tail: [V(1.35, 0.28, -0.55), V(1.51, 0.17, -0.44), V(1.62, 0.15, -0.25), V(1.65, 0.2, -0.08), V(1.57, 0.29, 0.04)],
+      },
+    },
   };
   // Asleep on the board the head sinks a little between the paws and the tail comes down round
   // its side.
   LIE.board.asleep = { ...LIE.board.awake, head: V(0.0, 0.64, 0.82), pitch: 0.04, kF: [0.8, 0.78],
     tail: [V(0.98, 0.3, -0.5), V(1.12, 0.2, -0.28), V(1.16, 0.16, -0.02), V(1.06, 0.15, 0.2), V(0.88, 0.15, 0.3)] };
+  LIE.cuddle.awake = {
+    ...LIE.cuddle.loaf,
+    side: [V(0, 0.41, -0.91), V(0, 0.64, -0.77)],
+    paws: [V(0.45, 0.73, 0.50), V(0.49, 1.03, -0.10)],
+    // Follow the chest and hips as they roll belly-up, keeping the limbs extended.
+    aims: [
+      { toes: V(-0.8, 0.12, 0.06), top: V(0, -0.86, -0.51) },
+      { toes: V(-0.85, 0.15, -0.07), top: V(0, -0.86, -0.51) },
+    ],
+    hind: [
+      { knee: V(0.83, 0.68, 0.13), paw: V(1.02, 0.73, 0.45), toes: V(0.75, -0.11, 0.22), top: V(0, -1, -0.32) },
+      { knee: V(0.98, 0.89, -0.30), paw: V(1.28, 1.02, -0.17), toes: V(0.65, -0.07, 0.12), top: V(0, -1, -0.32) },
+    ],
+    tail: [V(1.16, 0.46, -0.60), V(1.36, 0.45, -0.64), V(1.55, 0.49, -0.65), V(1.66, 0.67, -0.60), V(1.56, 0.86, -0.51)],
+  };
   // Lying and cross: the tail along the desk out to the right of the rump (see `update`).
   const THUMP_LIE = [V(1.18, 0.3, -0.52), V(1.36, 0.12, -0.38), V(1.48, 0.06, -0.2), V(1.54, 0.05, -0.02), V(1.56, 0.05, 0.14)];
   // When each part lets go, over the settling (0..1): the body first, then the head goes down, a
@@ -181,22 +214,67 @@
       if (out.aimed) for (const q of ['toes', 'top']) out.aims[j][q].lerpVectors(A.aims[j][q], B.aims[j][q], kp);
     }
     A.tail.forEach((q, i) => out.tail[i].lerpVectors(q, B.tail[i], kt));
-    out.head.lerpVectors(A.head, B.head, kd);
-    out.roll = mix(A.roll, B.roll, kd);
-    out.pitch = mix(A.pitch, B.pitch, kd);
+    // Only the keyboard pose puts the head down at a particular spot.
+    if (A.head) {
+      out.head.lerpVectors(A.head, B.head, kd);
+      out.roll = mix(A.roll, B.roll, kd);
+      out.pitch = mix(A.pitch, B.pitch, kd);
+    }
     return out;
   }
   // The pose it is settling into (awake or asleep, as far as it has dozed off), and where it is now.
   // Lying down already asleep (`calm`) it goes straight into the pose.
   const restStage = stageOf(), lieStage = stageOf();
   function poseNow(L, m, doze, calm) {
+    if (L === LIE.cuddle) {
+      const roll = smooth(0, 1, m);
+      return blendStage(L.loaf, L.awake, () => roll, lieStage);
+    }
     blendStage(L.awake, L.asleep, () => doze, restStage);
     return blendStage(calm ? restStage : L.loaf, restStage, part => melted(part, m), lieStage);
+  }
+  const cuddleAxis = V(1, 0, -0.23).normalize();
+  const CUDDLE_SWAY_RATE = 5;
+  function rotateCuddlePoint(point, pivot, angle) {
+    point.sub(pivot).applyAxisAngle(cuddleAxis, angle).add(pivot);
+  }
+  function cuddlePawClench(age) {
+    return smooth(0.76, 1.14, age) * (1 - smooth(1.28, 1.78, age));
+  }
+  function spreadCuddlePaws(st, age, lie) {
+    const stretch = smooth(0.32, 0.78, age) * (1 - smooth(1.04, 1.5, age)) * smooth(0.45, 0.98, lie);
+    for (const i of [0, 1]) {
+      const side = i === 0 ? -stretch : stretch;
+      st.paws[i].addScaledVector(st.side[1], 0.09 * side);
+      st.hind[i].knee.addScaledVector(st.side[0], 0.045 * side);
+      st.hind[i].paw.addScaledVector(st.side[0], 0.085 * side).addScaledVector(cuddleAxis, 0.055 * stretch);
+    }
+  }
+  function swayCuddle(st, age, amount) {
+    const strength = amount * smooth(0, 0.55, age);
+    const beat = age * CUDDLE_SWAY_RATE;
+    const hipRoll = 0.20 * Math.sin(beat) * strength;
+    const chestRoll = 0.16 * Math.sin(beat - 0.30) * strength;
+    const hips = st.path[1], chest = st.path[5];
+    st.side[0].applyAxisAngle(cuddleAxis, hipRoll);
+    st.side[1].applyAxisAngle(cuddleAxis, chestRoll);
+    // The paws sway with the chest and hips.
+    for (const i of [0, 1]) {
+      const hind = st.hind[i];
+      rotateCuddlePoint(st.paws[i], chest, chestRoll);
+      rotateCuddlePoint(hind.knee, hips, hipRoll);
+      rotateCuddlePoint(hind.paw, hips, hipRoll);
+      for (const axis of ['toes', 'top']) {
+        st.aims[i][axis].applyAxisAngle(cuddleAxis, chestRoll);
+        hind[axis].applyAxisAngle(cuddleAxis, hipRoll);
+      }
+    }
+    st.tail.forEach(q => rotateCuddlePoint(q, hips, 0.6 * hipRoll));
   }
   Object.assign(cat.lying, {
     path: lieStage.path.map(() => V()), side: [V(), V()], kS: [1, 1], kF: [1, 1],
     hind: [0, 1].map(() => ({ knee: V(), paw: V(), toes: null, top: null })), tail: lieStage.tail.map(() => V()),
-    floor: (x, z) => keyboard.surfaceAt(x, z),
+    floor: (x, z) => keyboard.group.visible ? keyboard.surfaceAt(x, z) : 0,
   });
   // Writes a stage into `cat.lying`, in body space about `origin`.
   function shapeLying(st, lead, origin) {
@@ -218,9 +296,10 @@
   const chinAt = [V(), V(), V()];
   // Lying down takes steps, as a cat does it. At the keyboard: it leans over and puts its front
   // paws out onto the keys one after the other, then lowers itself, chest first, stays down on
-  // its elbows staring at the keys a moment (STARE) and only then settles. `FLOP` is when the
+  // its elbows staring at the keys a moment (STARE) and only then settles. `BOARD_FLOP` is when the
   // body goes down, in seconds from the start.
-  const FLOP = { board: 0.6 }, STARE = 2.2;
+  const BOARD_FLOP = 0.6, STARE = 2.2;
+  const CUDDLE_HOLD = 0.6, CUDDLE_LOWER = 0.70, CUDDLE_ROLL = 0.30, CUDDLE_TIME = 5.4;
   const post = message => window.webkit?.messageHandlers?.cat?.postMessage(message);
 
   // Adds irritation; it only starts to fade a couple of seconds after the last poke. Switched off
@@ -276,7 +355,7 @@
   function key(code, down) {
     const t = now();
     if (MODS.has(code)) { if (down) S.mods.add(code); else S.mods.delete(code); }
-    if (down) { noteInput('key'); S.lastUserKey = t; }
+    if (down) { noteInput('key'); S.lastUserKey = t; S.cuddleUntil = 0; }
     // The mouse cat of a pair notices the typing but leaves it to the other one.
     if (opts.role === 'mouse') { if (down) wake(t); return; }
     const k = keyboard.resolve(code);
@@ -285,6 +364,7 @@
     // spring back by itself, whatever the press ends up doing, or its label never fades.
     if (down && code === 'CapsLock') setTimeout(() => key(code, false), 120);
     if (!down) {
+      if (S.keyGaze?.key === k) S.keyGaze.until = t + 0.36;
       if (tailTap.key === k) { tailTap.down = false; return; }
       k.down = false;
       for (const p of Object.values(paws)) if (p.key === k) p.down = false;
@@ -311,6 +391,7 @@
       }
       return;
     }
+    S.keyGaze = { key: k, at: t, until: Infinity };
     // Easter egg: space goes to the tail, unless the tail is busy thumping in a huff.
     if (k.code === 'Space' && !S.cross) {
       tailPat(k, t);
@@ -321,13 +402,13 @@
     }
     let side = keyboard.leftHand(code) ? 'R' : 'L';
     if (mousing(t)) side = 'R';
-    const paw = strike(k, side, t);
+    const paw = strike(k, side, t, k.code === 'Enter');
     S.strokes.push(t);
     // Mashing the keyboard (four or more keys inside 150 ms) is upsetting.
     if (S.strokes.filter(s => t - s < 0.15).length >= TUNING.mashKeys) poke(0.3, t);
     // F keys have no caps of their own and press the digit below; the label still names the F key.
     if (!opts.privacy) popup(k, t, paw.side, /^F\d+$/.test(code) ? code : k.label);
-    shortcut(k.code, code, t, paw);
+    shortcut(k.code, code, t);
   }
 
   function tailPat(k, t) {
@@ -339,34 +420,32 @@
   }
 
   // A paw comes down on key `k`. Also used when the cat presses a key on its own.
-  function strike(k, side, t) {
+  function strike(k, side, t, heavy = false) {
     const paw = paws[side];
     paw.from.copy(paw.pos);
     paw.key = k;
     paw.t0 = t;
     paw.dur = clamp(paw.pos.distanceTo(keyboard.keyTop(k, tmp)) * 0.09, 0.05, 0.1);
     paw.down = true;
+    paw.heavy = heavy;
     // No two strikes alike: a little more or less lift and jolt each time.
-    paw.lift = mix(0.8, 1.25, Math.random());
+    paw.lift = heavy ? 2.65 : mix(0.8, 1.25, Math.random());
     k.down = true;
     S.lastKey = t;
     S.lastPaw = side;
-    // Each strike jolts the body a little: a dip into the shoulders and a small nod.
-    P.squash.kick(0.35);
-    P.pitch.kick(mix(0.65, 1.1, Math.random()));
+    // Ordinary strikes give a small nod. The stronger recoil starts on contact.
+    if (!heavy) {
+      P.squash.kick(0.35);
+      P.pitch.kick(mix(0.65, 1.1, Math.random()));
+    }
     return paw;
   }
 
-  // Shortcuts it knows: Enter gets a hearty whack, a run of Backspace makes it sweat, Save gets a
-  // nod, and Copy has it hold the copied thing up until you paste it.
-  function shortcut(name, code, t, paw) {
+  // A run of Backspace makes it sweat, Save gets a nod, and Copy has it hold the copied thing
+  // up until you paste it.
+  function shortcut(name, code, t) {
     const mod = S.mods.size > 0;
-    if (name === 'Enter') {
-      paw.lift = 2.2;
-      P.squash.kick(0.5);
-      P.desk.kick(0.12);
-      effect('bang', keyboard.keyTop(keyboard.resolve(code), V()).add(V(0, 0.12, 0)), 0.2, 0.22, V(0, 0.2, 0), 42);
-    } else if (name === 'Backspace') {
+    if (name === 'Backspace') {
       S.backs.push(t);
       while (S.backs.length && t - S.backs[0] > 1.6) S.backs.shift();
       if (S.backs.length >= 5 && t - S.lastOops > 3) {
@@ -487,6 +566,10 @@
       const pose = pushPaw(sc, t);
       if (pose) return pose;
     }
+    if (sc?.kind === 'yarn' && !S.lying) {
+      const pose = yarnPaw(sc, name, paw, t - sc.t0);
+      if (pose) return pose;
+    }
     if (sc && sc.kind === 'swat' && name === sc.paw && u < 0.6) {
       const arm = cat.arms[paw.side < 0 ? 0 : 1];
       cat.attach(arm.shoulderLocal, arm.shoulder);
@@ -494,6 +577,12 @@
     }
     const lie = P.lie.x;
     const LS = S.lying;
+    if (LS?.at === 'cuddle') {
+      const k = paw.side < 0 ? 0 : 1;
+      // Relax the wrists into the side pose as the chest turns, with the higher paw following later.
+      const fold = smooth(k ? 0.22 : 0.06, k ? 0.96 : 0.85, lie);
+      return [restPaw(paw, tmp).lerp(lieStage.paws[k], fold), 4];
+    }
     if (LS && !LS.up && LS.at === 'board' && lie < 0.45) {
       // Reaching out onto the keys before it lies down: one paw, then the other.
       if (t - LS.t0 < (paw.side < 0 ? 0.05 : 0.25)) return null;
@@ -556,7 +645,7 @@
   function updatePaw(name, paw, t, dt) {
     const k = paw.key;
     const strikeAge = t - paw.t0;
-    if (k && (paw.down || strikeAge < paw.dur + 0.06)) {
+    if (k && (paw.heavy || paw.down || strikeAge < paw.dur + 0.06)) {
       const top = keyboard.keyTop(k, tmp2);
       const hover = tmp.copy(top).add(V(0, 0.12, 0));
       const press = top.clone().add(V(0, 0.07, 0));
@@ -565,8 +654,17 @@
         const u = smooth(0, 1, strikeAge / paw.dur);
         paw.pos.lerpVectors(paw.from, hover, u);
         paw.pos.y += Math.sin(Math.sqrt(u) * Math.PI) * clamp(paw.from.distanceTo(hover) * 0.3, 0.04, 0.2) * (paw.lift || 1);
-      } else if (paw.down) {
-        paw.pos.lerpVectors(hover, press, clamp((strikeAge - paw.dur) / 0.035, 0, 1));
+      } else if (paw.down || paw.heavy) {
+        const landing = clamp((strikeAge - paw.dur) / 0.035, 0, 1);
+        paw.pos.lerpVectors(hover, press, landing);
+        if (paw.heavy && landing === 1) {
+          paw.heavy = false;
+          P.squash.kick(1.25);
+          P.pitch.kick(1.55);
+          P.impactRoll.kick(-paw.side * 4.3);
+          P.desk.kick(0.44);
+          effect('bang', top.add(V(0, 0.12, 0)), 0.28, 0.34, V(0, 0.2, 0), 42);
+        }
       } else {
         paw.pos.lerp(hover, approach(30, dt));
       }
@@ -611,7 +709,12 @@
     el.k += ((paw.elbowWant ? 1 : 0) - el.k) * approach(7, dt);
     if (paw.elbowWant) el.at.lerp(paw.elbowWant, el.k < 0.05 ? 1 : approach(9, dt));
     const aim = paw.aim, want = paw.aimWant;
-    aim.k += ((want ? 1 : 0) - aim.k) * approach(7, dt);
+    let aimWeight = want ? 1 : 0;
+    if (want && S.lying?.at === 'cuddle' && S.lying.up) {
+      // Let the wrists return to their resting angle while the chest is still rising.
+      aimWeight = smooth(0.15, 0.65, P.lie.x);
+    }
+    aim.k += (aimWeight - aim.k) * approach(7, dt);
     if (want) { aim.toes.lerp(want.toes, approach(9, dt)); aim.top.lerp(want.top, approach(9, dt)); }
   }
 
@@ -621,14 +724,31 @@
     return out.set((tmp.x + 1) / 2 * window.innerWidth, (1 - tmp.y) / 2 * window.innerHeight, 0);
   }
 
+  const aimedPupil = V();
+  function aimPupil(eye, focus, room) {
+    // Map the screen direction to the eye's tilted plane, where the pupil actually moves.
+    const group = eye.group, depth = eye.pupil.position.z, step = 0.1;
+    const centre = screen(group.localToWorld(tmp2.set(0, 0, depth)), V());
+    const right = screen(group.localToWorld(tmp2.set(step, 0, depth)), V()).sub(centre);
+    const up = screen(group.localToWorld(tmp2.set(0, step, depth)), V()).sub(centre);
+    const det = right.x * up.y - right.y * up.x;
+    if (Math.abs(det) < 1e-3) return aimedPupil.set(0, 0, 0);
+    const dx = focus.x - centre.x, dy = focus.y - centre.y;
+    const x = step * (dx * up.y - dy * up.x) / det;
+    const y = step * (right.x * dy - right.y * dx) / det;
+    const scale = Math.max(1, Math.hypot(x / Math.max(room, 0.001), y / 0.026));
+    return aimedPupil.set(x / scale, y / scale, 0);
+  }
+
   const headEuler = new THREE.Euler(), headTurn = new THREE.Quaternion();
 
   // MARK: Scenes
 
   function startScene(kind, t, extra = {}) {
-    const dur = { push: 7.2, stretch: 2.4, nudge: 2.6, swat: 1 }[kind];
+    const dur = { push: 7.2, yarn: 5.15, stretch: 2.4, nudge: 2.6, swat: 1 }[kind];
     S.scene = { kind, t0: t, dur, ...extra };
     if (kind === 'push') planPush(S.scene, t, freshPush());
+    if (kind === 'yarn') planYarn(S.scene);
     S.act = null;
     S.busyUntil = Math.max(S.busyUntil, t + S.scene.dur + 1);
   }
@@ -637,6 +757,7 @@
     const sc = S.scene;
     S.scene = null;
     if (!sc) return;
+    if (sc.kind === 'yarn') S.nextYarn = t + 100;
     if (sc.kind === 'push') {
       const fell = S.cupFall || S.cupBackAt;
       S.nextPush = t + (fell ? 600 : 120);
@@ -644,6 +765,84 @@
       // and backing down, it looks off to one side.
       if (fell && !interrupted) S.act = Math.random() < 0.55 ? { kind: 'slowBlink', t0: t, dur: 1.8, side: 1 } : { kind: 'groom', t0: t, dur: 2.6, side: 1 };
       else if (sc.caught && !interrupted) S.act = { kind: 'look', t0: t, dur: 2, side: -1 };
+    }
+  }
+
+  const YARN_ARRIVAL = 1.45;
+  const yarnNext = V(), yarnAxis = V(), yarnSpin = new THREE.Quaternion();
+
+  function yarnHeight(x, z) {
+    return keyboard.group.visible ? keyboard.surfaceAt(x, z) + yarn.radius : yarn.home.y;
+  }
+
+  function planYarn(sc) {
+    const flank = new THREE.Plane().setFromCoplanarPoints(camera.position,
+      V(1, -1, 0).unproject(camera), V(1, 1, 0).unproject(camera));
+    if (flank.normal.x < 0) flank.negate();
+    sc.yarnFlank = flank;
+    const viewEdge = p => p.x - flank.distanceToPoint(p) / flank.normal.x;
+    sc.yarnRim = viewEdge(yarn.home);
+    sc.yarnStart = yarn.home.clone().setX(sc.yarnRim + yarn.radius * 1.4);
+    const middle = V(cat.home.x + 0.08, 0, 0.72);
+    middle.y = yarnHeight(middle.x, middle.z);
+    const exit = V(middle.x, yarn.home.y, middle.z);
+    exit.x = viewEdge(exit) + yarn.radius * 1.4;
+    // The cat faces the camera, so its left paw is 'R' (screen right).
+    sc.pats = [
+      { paw: 'R', at: 2.03, from: yarn.home, to: middle, roll: 0.84, pulling: true },
+      { paw: 'L', at: 3.65, from: middle, to: exit, roll: 1.05 },
+    ];
+    yarn.group.position.copy(sc.yarnStart);
+    yarn.group.rotation.set(0, 0, (yarn.home.x - sc.yarnStart.x) / yarn.radius);
+    yarn.setOpacity(0);
+  }
+  function yarnRoll(pat, age, out) {
+    const u = clamp((age - pat.at) / pat.roll, 0, 1);
+    const travel = 1 - (1 - u) ** 3 * (1 + 3 * u);
+    out.lerpVectors(pat.from, pat.to, travel);
+    if (pat.pulling) {
+      // Guide the ball over the back of the keyboard into the space between the paws.
+      out.y = mix(pat.from.y, pat.to.y, smooth(0, 0.45, travel));
+    } else {
+      out.y = yarnHeight(out.x - yarn.radius * 0.5, out.z);
+    }
+    return out;
+  }
+  function yarnPaw(sc, name, paw, age) {
+    const pat = sc.pats.find(p => p.paw === name && age >= p.at - 0.59 && age < p.at + 0.62);
+    if (!pat) return null;
+    const beat = age - pat.at;
+    const follow = pat.pulling ? 0.38 : 0.20;
+    const lift = smooth(-0.59, -0.23, beat) * (1 - smooth(follow, 0.62, beat));
+    const dip = smooth(-0.28, -0.07, beat) * (1 - smooth(follow, follow + 0.14, beat));
+    const target = yarnRoll(pat, Math.min(age, pat.at + follow), tmp2);
+    target.x += paw.side * mix(pat.pulling ? 0.12 : 0.29, pat.pulling ? 0.17 : 0.22, dip);
+    target.y += mix(pat.pulling ? 0.40 : 0.28, pat.pulling ? 0.13 : 0.075, dip);
+    target.z += 0.065;
+    return [restPaw(paw, tmp).lerp(target, lift), 7];
+  }
+  function updateYarn(sc, age, dt) {
+    if (sc) {
+      yarnNext.lerpVectors(sc.yarnStart, yarn.home, smooth(0, YARN_ARRIVAL, age));
+      for (const pat of sc.pats) {
+        if (age < pat.at) break;
+        yarnRoll(pat, age, yarnNext);
+      }
+      const ball = yarn.group, dx = yarnNext.x - ball.position.x, dz = yarnNext.z - ball.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > 0) {
+        yarnSpin.setFromAxisAngle(yarnAxis.set(dz, 0, -dx).divideScalar(distance), distance / yarn.radius);
+        ball.quaternion.premultiply(yarnSpin).normalize();
+      }
+      ball.position.copy(yarnNext);
+      if (sc.noticedAt === undefined && ball.position.x <= sc.yarnRim) sc.noticedAt = age;
+      // The outline extends beyond the ball's rolling radius.
+      if (sc.noticedAt !== undefined && sc.yarnLeftAt === undefined
+        && sc.yarnFlank.distanceToPoint(ball.position) > yarn.radius * 1.1) sc.yarnLeftAt = age;
+      if (yarn.opacity !== 1) yarn.setOpacity(1);
+    } else if (yarn.opacity) {
+      const opacity = yarn.opacity * (1 - approach(18, dt));
+      yarn.setOpacity(opacity < 0.01 ? 0 : opacity);
     }
   }
 
@@ -811,7 +1010,7 @@
     const idle = t - S.lastInput;
     const wall = Date.now(), wallDt = clamp((wall - S.lastWall) / 1000, 0, 5);
     S.lastWall = wall;
-    if (!S.asleep && !S.petting && !S.nag && idle > opts.sleepAfter) {
+    if (!S.asleep && !S.petting && !S.nag && t >= S.cuddleUntil && idle > opts.sleepAfter) {
       S.asleep = true;
       // Picks how to sleep this time.
       const r = Math.random();
@@ -939,58 +1138,68 @@
 
     // Scenes run their course; a few check for their end conditions.
     let sc = S.scene;
-    if (sc && t > sc.t0 + sc.dur) {
+    if (sc?.kind === 'yarn' && (S.asleep || S.nag)) endScene(t, true);
+    else if (sc?.kind === 'yarn' && S.lying) sc.t0 = t;
+    else if (sc && t > sc.t0 + sc.dur) {
       endScene(t);
-      sc = null;
     }
+    sc = S.scene;
     if (sc && sc.kind === 'nudge') updateNudge(sc, t);
 
-    // Over the keys: to make you take a break, or asleep there after a long while alone.
+    // Give break reminders and sleep over the keyboard priority over the head-rub flop.
     let lieWant = null;
     if (S.nag || (S.asleep && S.sleepPose === 'board')) lieWant = 'board';
+    if (S.nag || S.asleep || S.cross) S.cuddleUntil = 0;
+    if (!lieWant && t < S.cuddleUntil) lieWant = 'cuddle';
     if (lieWant && lieWant !== S.lieAt && P.lie.x > 0.05) lieWant = null;     // get up first, then move
     else if (lieWant) S.lieAt = lieWant;
-    if (lieWant && (!S.lying || S.lying.up)) S.lying = { at: lieWant, t0: t, calm: S.asleep };
+    if (lieWant && (S.lying?.at !== lieWant || S.lying.up)) S.lying = { at: lieWant, t0: t, calm: S.asleep };
     const LS = S.lying;
+    const cuddling = lieWant === 'cuddle';
+    const cuddleRise = !lieWant && LS?.at === 'cuddle' && LS.landed && S.cuddleUntil > 0;
+    const lieAge = LS ? t - LS.t0 : 0;
+    const cuddleRestAge = LS?.at === 'cuddle' && LS.landed ? t - LS.landed : 0;
+    const frontClench = cuddling ? cuddlePawClench(cuddleRestAge) : 0;
+    const hindClench = cuddling ? cuddlePawClench(cuddleRestAge - 0.12) : 0;
     let rollWant = 0, meltWant = 0;
     if (LS && lieWant) {
-      const age = t - LS.t0;
-      rollWant = age >= FLOP[LS.at] ? 1 : 0;
-      // Onto the keys it lowers itself, chest first. Getting up is slower and steadier.
-      P.lie.hz = 1.4; P.lie.damping = 0.85;
-      if (!LS.landed && P.lie.x > 0.9) {
+      rollWant = cuddling ? smooth(0, CUDDLE_LOWER, lieAge) : Number(lieAge >= BOARD_FLOP);
+      P.lie.hz = cuddling ? 2.6 : 1.4;
+      P.lie.damping = 0.85;
+      if (!LS.landed && P.lie.x > (cuddling ? 0.98 : 0.9)) {
         LS.landed = t;
-        P.squash.kick(0.25);
+        if (cuddling) heart(t);
+        else P.squash.kick(0.25);
       }
-      // Once down it stares at the keys a moment, then settles into the pose.
-      meltWant = LS.landed && (LS.calm || t - LS.landed > STARE) ? 1 : 0;
+      // Roll through the side pose while lowering. On the keys, keep the pause to stare.
+      meltWant = cuddling ? smooth(CUDDLE_ROLL, 0.98, lieAge)
+        : Number(!!LS.landed && (LS.calm || t - LS.landed > STARE));
       // Asleep, it wakes enough to move, and only dozes off again once down.
       if (!LS.landed || t - LS.landed < 1) S.sleep = Math.min(S.sleep, 0.3);
     } else if (LS) {
       LS.up = true;
-      P.lie.hz = 1.1; P.lie.damping = 0.85;
+      P.lie.hz = LS.at === 'cuddle' ? 0.78 : 1.1;
+      P.lie.damping = 0.85;
       // It gathers its limbs first, then up (chest first, as going down), and a stretch.
-      rollWant = P.melt.x > 0.3 ? 1 : 0;
+      rollWant = Number(P.melt.x > 0.3 && (LS.at !== 'cuddle' || !!LS.landed));
       if (P.lie.x < 0.02) {
         if (LS.at === 'board' && !S.asleep) S.stretchUntil = t + 4;
+        if (cuddleRise) S.nextAct = Math.max(S.nextAct, t + 1);
         S.lying = null;
       }
     }
     P.lie.step(rollWant, dt);
-    P.melt.hz = meltWant > P.melt.x ? 0.3 : 1.8;
+    P.melt.hz = meltWant > P.melt.x ? (cuddling ? 0.95 : 0.3) : 1.8;
     P.melt.step(meltWant, dt);
     P.doze.step(S.asleep ? 1 : 0, dt);
     P.tailLie.step(P.lie.x, dt);
     const lie = clamp(P.lie.x, 0, 1.12);
     if (S.lying) S.busyUntil = Math.max(S.busyUntil, t + 0.5);
-    sc = S.scene;
-    const scU = sc ? (t - sc.t0) / sc.dur : 0;
-
     // Purring: petted past the 呼噜 threshold, or the pointer resting by its head once close.
     const hs = screen(cat.head.getWorldPosition(tmp2), V());
     S.rubCursor = level >= 3 && !pet && !S.asleep && !S.cross && !sc && S.cursor && t - S.cursorSeen > 1.2
       && Math.hypot(S.cursor.x - hs.x, S.cursor.y - hs.y) < 85 && !sulking;
-    const purring = (pet && !S.cross && S.petStart >= 0 && t - S.petStart > TUNING.purrAfter && !sulking) || S.rubCursor;
+    const purring = cuddling || (pet && !S.cross && S.petStart >= 0 && t - S.petStart > TUNING.purrAfter && !sulking) || S.rubCursor;
     P.purr.step(purring ? 1 : 0, dt);
     S.purr = clamp(P.purr.x, 0, 1);
     S.breath += dt * mix(0.45, 0.38, S.purr);
@@ -1016,7 +1225,7 @@
     const idleFor = t - S.lastInput;
     const friendNear = S.friend && Math.abs(S.friend.x - hs.x) < 520 && Math.abs(S.friend.y - hs.y) < 300;
     if (S.act && t > S.act.t0 + S.act.dur) S.act = null;
-    if (!S.act && !sc && t > S.nextAct && idleFor > 2.5 && !S.asleep && !pet && !S.cross && !curiousNow && !quiet && !S.nag && !sulking) {
+    if (!S.act && !sc && !S.lying && t > S.nextAct && idleFor > 2.5 && !S.asleep && !pet && !S.cross && !curiousNow && !quiet && !S.nag && !sulking) {
       S.nextAct = t + 4 + Math.random() * 5;
       const r = Math.random();
       if (opts.cup && !S.cupFall && !S.cupBackAt && idleFor > 20 && t > S.nextPush && r < 0.25 && opts.role !== 'keys') {
@@ -1024,6 +1233,8 @@
       } else if (friendNear && r >= 0.32 && r < 0.55) {
         if (Math.random() < 0.6) swatFriend(t);
         else { S.act = { kind: 'slowBlink', t0: t, dur: 1.6, side: 1 }; post({ friend: 'blink' }); }
+      } else if (idleFor > 20 && t > S.nextYarn && r >= 0.55 && r < 0.80 && opts.role !== 'keys' && !mousing(t)) {
+        startScene('yarn', t);
       } else {
         const kinds = ['tilt', 'tilt', 'ear', 'slowBlink', 'look', 'tail', 'groom'];
         if (idleFor > 40) kinds.push('yawn');
@@ -1034,17 +1245,38 @@
       S.busyUntil = Math.max(S.busyUntil, t + (S.act ? S.act.dur : 1) + 0.8);
     }
     // Only using the mouse for a long while, it comes looking for attention.
-    if (!sc && TUNING.needyAfter > 0 && !quiet && !S.asleep && !S.nag && opts.role !== 'mouse' && t - S.lastMouse < 5
+    if (!S.scene && !S.lying && TUNING.needyAfter > 0 && !quiet && !S.asleep && !S.nag && opts.role !== 'mouse' && t - S.lastMouse < 5
       && t - S.keysQuietSince > TUNING.needyAfter * 60 && t > S.nextNudge) {
       S.nextNudge = t + TUNING.needyAfter * 60;
       S.keysQuietSince = t;
       startScene('nudge', t);
     }
     sc = S.scene;
+    const scAge = sc ? t - sc.t0 : 0;
+    const scU = sc ? scAge / sc.dur : 0;
+    const yarnPlaying = sc?.kind === 'yarn' && !S.lying;
+    updateYarn(yarnPlaying ? sc : null, scAge, dt);
+    const yarnNoticed = yarnPlaying && sc.noticedAt !== undefined;
+    const noticeAge = yarnNoticed ? scAge - sc.noticedAt : 0;
+    const yarnStartle = smooth(0, 0.10, noticeAge) * (1 - smooth(0.18, 0.47, noticeAge));
+    const yarnExitAge = yarnNoticed && sc.yarnLeftAt !== undefined ? scAge - sc.yarnLeftAt : 0;
+    const yarnSurprise = smooth(0, 0.10, noticeAge) * (1 - smooth(0, 0.36, yarnExitAge));
     const act = S.act, actU = act ? (t - act.t0) / act.dur : 0;
     // Smooth in, hold, smooth out over the fidget's duration.
     const actEnv = act && actU >= 0 ? smooth(0, 0.25, actU) * (1 - smooth(0.7, 1, actU)) : 0;
     const scEnv = sc ? smooth(0, 0.15, scU) * (1 - smooth(0.85, 1, scU)) : 0;
+    const yarnInterest = yarnNoticed ? smooth(0, 0.34, noticeAge) * scEnv : 0;
+    let yarnTilt = 0, yarnPeek = 0, yarnBlink = 0;
+    if (yarnNoticed) {
+      const [pull, bat] = sc.pats;
+      const handoff = pull.at + pull.roll;
+      // Tip an ear toward the incoming ball, then lean in as it settles between the paws.
+      yarnTilt = smooth(0.06, 0.45, noticeAge) * (1 - smooth(pull.at - 0.50, pull.at - 0.05, scAge));
+      yarnPeek = smooth(handoff - 0.32, handoff + 0.11, scAge) * (1 - smooth(bat.at - 0.33, bat.at + 0.10, scAge));
+      // Blink once while the ball is still between the paws.
+      const peekAge = scAge - handoff;
+      yarnBlink = smooth(0.24, 0.33, peekAge) * (1 - smooth(0.40, 0.54, peekAge));
+    }
 
     // Body: the haunches stay planted; the spine bends towards whatever the busy paw reaches for.
     const striking = Object.values(paws).find(p => p.key && (p.down || t - p.t0 < 0.3));
@@ -1063,6 +1295,9 @@
       shift = (keyboard.keyTop(striking.key, tmp2).x - cat.home.x - arm.shoulderLocal.x) * 0.32;
       hunch = 0.16;
     }
+    if (yarnNoticed) shift += 0.14 * yarnInterest * (1 - smooth(2.18, 2.9, scAge));
+    hunch += 0.085 * yarnPeek;
+    squash += 0.055 * yarnPeek - 0.035 * yarnStartle;
     // A burst of typing settles the cat into a rounder, lower loaf over the keys.
     if (t - S.lastKey < 1.2) { hunch = Math.max(hunch, 0.12 + 0.06 * busyness); squash = Math.max(squash, 0.09 + 0.04 * busyness); }
     hunch += 0.1 * S.sleep;
@@ -1119,7 +1354,13 @@
       S.busyUntil = Math.max(S.busyUntil, t + 0.5);
     }
     // Reaching out onto the keys it leans well forward.
-    if (S.lying && !S.lying.up && S.lieAt === 'board' && t - S.lying.t0 < FLOP.board + 0.3) hunch += 0.3 * smooth(0, 0.3, t - S.lying.t0);
+    if (LS && !LS.up && LS.at === 'board' && t - LS.t0 < BOARD_FLOP + 0.3) hunch += 0.3 * smooth(0, 0.3, t - LS.t0);
+    if (cuddling) {
+      // Shift the weight onto the cheek side before the hips follow the shoulders down.
+      const lean = smooth(0, 0.18, lieAge) * (1 - smooth(CUDDLE_ROLL, CUDDLE_LOWER, lieAge));
+      shift -= 0.13 * lean;
+      squash += 0.07 * lean;
+    }
     // Locked onto the cup it sinks a little and leans in; watching it fall, it peers after it.
     P.hunt.step(push && ['notice', 'reach', 'hover', 'tap', 'shove'].includes(push.b.kind) ? 1 : 0, dt);
     const hunt = clamp(P.hunt.x, 0, 1);
@@ -1140,12 +1381,22 @@
     // Lying down: the spine itself lies down (chest first, then the hips), so the outline becomes
     // a lying cat's.
     const L = LIE[S.lieAt], melt = clamp(P.melt.x, 0, 1), st = poseNow(L, melt, clamp(P.doze.x, 0, 1), !!(S.lying && S.lying.calm));
+    if (LS?.at === 'cuddle') spreadCuddlePaws(st, lieAge, lie);
+    if (cuddleRestAge > 0 && melt > 0) swayCuddle(st, cuddleRestAge, melt);
+    const tailProgress = (cuddleRestAge - 1.02) / 1.8;
+    // Give the curl time to open while the tail sweeps toward the left flank.
+    const tailLeft = smooth(-0.08, 0.25, tailProgress);
+    // From center to the left flank, across to the right, then back to center.
+    const tailTurn = tailLeft - 2 * smooth(0.25, 0.75, tailProgress) + smooth(0.75, 1, tailProgress);
+    cat.lying.tailWag = L === LIE.cuddle ? (Math.PI / 2) * melt * tailTurn : null;
+    // Open the curl on the first swing and close it once the tip is back at center.
+    cat.lying.tailExtend = L === LIE.cuddle ? melt * (tailLeft - smooth(1, 1.22, tailProgress)) : 0;
     cat.body.position.copy(cat.home);
-    cat.body.position.x += (S.purr > 0.3 ? Math.sin(t * 150) * 0.003 * S.purr : 0);
+    if (S.purr > 0.3 && LS?.at !== 'cuddle') cat.body.position.x += Math.sin(t * 150) * 0.003 * S.purr;
     cat.lying.amount = clamp(lie, 0, 1.08);
     // Cross while lying, the tail comes down off the back onto the desk beside the rump and
     // thumps there, so the slam lands where the tail actually hits.
-    if (cross > 0.01 && lie > 0.05) {
+    if (S.lieAt === 'board' && cross > 0.01 && lie > 0.05) {
       st.tail.forEach((q, i) => {
         const w = (i + 1) / st.tail.length;
         tmp3.copy(THUMP_LIE[i]);
@@ -1162,36 +1413,42 @@
     // spine. No twist about the vertical: the round body would not show it, but the bib, collar
     // and stripes would slide round to the side.
     const up = 1 - clamp(lie, 0, 1);
-    cat.body.rotation.set(0.05 * S.sleep * up, 0, -P.shift.x * 0.06 * up);
+    const recoil = P.impactRoll.step(0, dt);
+    cat.body.rotation.set(0.05 * S.sleep * up, 0, (recoil - P.shift.x * 0.06) * up);
     cat.body.scale.set(1 + breathe * 0.4 * up, 1 + breathe * up, 1 + breathe * 0.4 * up);
     cat.bendBody();
-    cat.placeHead();
+    const headFollowsNeck = S.lieAt === 'cuddle';
+    cat.placeHead(headFollowsNeck);
     // At the keyboard, keys go down under its paws and its chin.
     const atKeys = S.lying && S.lieAt === 'board';
     const weights = atKeys ? [paws.L, paws.R].filter(p => p.pos.y < 0.32 && !p.key).map(p => p.pos) : [];
     if (atKeys && lie > 0.6) for (const [c, dx] of chinAt.map((c, i) => [c, (i - 1) * 0.13])) weights.push(c.set(st.head.x + dx, 0, st.head.z - 0.08));
     keyboard.weigh(0, 0, weights);
 
-    // Gaze target: the key pressed last, else the pointer; the eyes get there first. The key holds
-    // the gaze until the pointer moves: letting go of it does not send the eyes back to a pointer
-    // that has not moved since, or slow typing would swing the head between the two.
+    // Keep the latest key in focus while the pointer stays still, so slow typing does not
+    // swing the head back to the pointer between keystrokes.
     const headScreen = hs;
     let focus = null;
-    const lastPaw = paws[S.lastPaw];
-    const typing = lastPaw.key && (lastPaw.down || S.lastKey > S.cursorSeen) && t - S.lastKey < 5 ? lastPaw : null;
+    const typing = Object.values(paws).find(p => p.key && p.down && p.t0 > S.lastUserKey);
+    const keyGaze = S.keyGaze;
+    const watchedKey = keyGaze && t - keyGaze.at < 5
+      && (t < keyGaze.until || keyGaze.at >= S.cursorSeen) ? keyGaze.key : null;
     // 盯着键盘: down on its elbows at the keyboard, it watches the keys.
     const staring = !!(S.lying && !S.lying.up && S.lieAt === 'board' && !S.lying.calm && melt < 0.5);
-    if (staring) focus = screen(tmp2.set(0.1, 0.24, 1.05), V());
+    if (yarnNoticed) focus = screen(yarn.group.position, V());
+    else if (watchedKey) focus = screen(keyboard.keyTop(watchedKey, tmp2), V());
+    else if (staring) focus = screen(tmp2.set(0.1, 0.24, 1.05), V());
     else if (push && ['notice', 'reach', 'hover', 'tap', 'shove'].includes(push.b.kind)) focus = screen(cup.group.position, V());
     else if (push && push.b.kind === 'watch') focus = screen(S.cupFall ? cup.group.position : tmp2.copy(cup.group.position).setY(-0.6), V());
-    else if (typing) focus = screen(keyboard.keyTop(typing.key, tmp2), V());
-    else if (tailTap.key && t - tailTap.t0 < 0.6) focus = screen(tailTap.tip, V());
+    else if (typing && t - S.lastKey < 0.6) focus = screen(keyboard.keyTop(typing.key, tmp2), V());
+    else if (tailTap.key && tailTap.t0 > S.lastUserKey && t - tailTap.t0 < 0.6) focus = screen(tailTap.tip, V());
     else if (S.friend && friendNear && t - S.cursorSeen > 4 && !S.nag) focus = V(S.friend.x, S.friend.y, 0);
     else if (S.cursor) focus = V(S.cursor.x, S.cursor.y, 0);
     // Looking at you: straight out of the screen.
     const atYou = (push && ['check', 'caught', 'innocent'].includes(push.b.kind)) || (sc && sc.kind === 'nudge' && t - sc.t0 > 0.7)
       || (S.nag && t - S.lastKey > 0.6 && !staring) || stopping(t);
     if (atYou) focus = null;
+    const trackingObject = (watchedKey || yarnNoticed) && !atYou;
     let lx = 0, ly = 0;
     if (focus) {
       lx = clamp((focus.x - headScreen.x) / 260, -1, 1);
@@ -1214,13 +1471,14 @@
     const huffing = Math.max(cross, sulking ? 0.8 : 0);
     const huff = huffing * (lx >= 0 ? -1 : 1) * 0.32;
     // Curious, it turns its whole face to follow the pointer, not just its eyes.
-    const follow = mix(0.3, 0.5, curious);
+    const follow = mix(0.3, 0.5, Math.max(curious, yarnInterest));
     // Washing, it turns and tips its head down onto the paw.
     const licking = act && act.kind === 'groom' ? actEnv : 0;
     P.yaw.step(mix(lx * follow, huff, huffing) + petSide * 0.18 * S.rub + 0.14 * licking, dt);
     let nod = 0;
     if (act && act.kind === 'nod') nod = Math.sin(clamp(actU, 0, 1) * Math.PI * 2) * 0.22;
     if (sc && sc.kind === 'stretch') nod -= 0.12 * scEnv;
+    nod += 0.09 * yarnInterest + 0.115 * yarnPeek;
     if (licking) nod += (0.16 + 0.1 * lick(t)) * licking;
     cat.setLick(smooth(0.4, 0.8, licking) * smooth(0.3, 0.9, lick(t)));
     P.pitch.step(ly * mix(0.12, 0.22, curious) * (1 - huffing) - 0.28 + 0.5 * P.hunch.x + (mousing(t) ? 0.06 : 0) + 0.5 * S.sleep + 0.08 * cross
@@ -1232,23 +1490,31 @@
     if (S.cursor && !striking && !mousing(t) && t - S.cursorSeen > 1.2 && Math.abs(lx) < 0.5 && Math.abs(ly) < 0.6) roll2 += 0.12 * Math.sign(lx || 1);
     // All innocence after the cup has gone: head cocked, looking at you.
     if (innocent) roll2 += 0.16;
+    roll2 -= 0.13 * yarnTilt;
     // The classic curious head cock, towards the side the pointer is on.
     roll2 += 0.2 * curious * (lx >= 0 ? -1 : 1);
     // Curled up, it rests its head over to one side.
     if (S.sleepPose === 'curl') roll2 += 0.35 * S.sleep;
     P.roll.step(roll2 - petSide * 0.12 * S.rub + 0.08 * S.sleep - 0.14 * licking, dt);
-    // Lying, the head is put down where the pose rests it, tipped over onto its chin or cheek, its
-    // face still turned to you; the neck runs into it from behind. Sitting it stays upright
-    // whatever the spine does. The nods and turns of the sitting head are added on top, the nods
-    // only a little when lying, since a nod there would turn the face away.
+    // On the keys, rest the chin or cheek at the pose's head target. During a roll the head
+    // already rides the neck, with small local movements layered on top.
     const lw = cat.lieAt(cat.NECK_S);
-    headLie.setFromEuler(headLieEuler.set(st.pitch, 0, st.roll));
-    if (lw > 0) cat.headPivot.position.lerp(tmp.copy(cat.head.position).applyQuaternion(headLie).negate().add(st.head).sub(cat.body.position), lw);
-    headEuler.set(P.pitch.x * mix(1, 0.3, lw), P.yaw.x + shake, -P.yaw.x * 0.2 + rubWave);
-    cat.headPivot.quaternion.identity().slerp(headLie, lw).multiply(headTurn.setFromEuler(headEuler));
-    // The head stays level however the body leans, and cocks about its own centre.
-    cat.head.rotation.z = P.roll.x - cat.body.rotation.z;
-    cat.headPivot.position.x += rubWave * 0.4;
+    if (!headFollowsNeck) {
+      headLie.setFromEuler(headLieEuler.set(st.pitch, 0, st.roll));
+      if (lw > 0) cat.headPivot.position.lerp(tmp.copy(cat.head.position).applyQuaternion(headLie).negate().add(st.head).sub(cat.body.position), lw);
+      cat.headPivot.quaternion.identity().slerp(headLie, lw);
+    }
+    const headMotion = headFollowsNeck ? mix(1, 0.1, lw) : 1;
+    // After touching down, tuck the chin and tip the cheek with a slight lag behind the roll.
+    const nuzzle = melt * smooth(0, 0.42, cuddleRestAge);
+    const nuzzleBeat = cuddleRestAge * CUDDLE_SWAY_RATE;
+    const chinTuck = 0.068 * nuzzle * (0.5 + 0.5 * Math.sin(nuzzleBeat - 0.65));
+    headEuler.set(P.pitch.x * (headFollowsNeck ? headMotion : mix(1, 0.3, lw)) + chinTuck,
+      (P.yaw.x + shake) * headMotion + 0.09 * nuzzle * Math.sin(nuzzleBeat),
+      (-P.yaw.x * 0.2 + rubWave) * headMotion);
+    cat.headPivot.quaternion.multiply(headTurn.setFromEuler(headEuler));
+    cat.head.rotation.z = P.roll.x * headMotion - cat.body.rotation.z + 0.12 * nuzzle * Math.sin(nuzzleBeat - 0.6);
+    cat.headPivot.position.x += rubWave * 0.4 * headMotion;
     cat.placeCollar();
     if (cat.outfit.kind === 'cny') cat.swingScarf(Math.sin(t * 2.3) * 0.02 + P.shift.x * 0.2);
 
@@ -1260,7 +1526,7 @@
     // Now and then one ear flicks at some sound only it can hear, asleep too.
     if (t > S.nextTwitch) {
       S.nextTwitch = t + mix(3, 9, Math.random()) * (S.asleep ? 1.6 : 1);
-      if (!cross) {
+      if (!cross && !cuddling) {
         S.twitch = { side: Math.random() < 0.5 ? -1 : 1, t0: t, size: mix(0.14, 0.26, Math.random()) };
         S.busyUntil = Math.max(S.busyUntil, t + 0.5);
       }
@@ -1274,7 +1540,7 @@
     if (twU >= 1) S.twitch = null;
     for (const e of cat.ears) {
       let flick = act && act.kind === 'ear' && e.s === act.side ? Math.sin(actU * Math.PI * 3) * 0.3 * (1 - actU) : 0;
-      if (tw && twU < 1 && e.s === tw.side) flick += Math.sin(twU * Math.PI * 2) * tw.size * (1 - twU);
+      if (tw && twU >= 0 && twU < 1 && e.s === tw.side) flick += Math.sin(twU * Math.PI * 2) * tw.size * (1 - twU);
       cat.turnEar(e, -e.s * (e.tilt - P.ears.x) + flick, -0.12 - 0.35 * cross + 0.12 * curious);
     }
 
@@ -1282,47 +1548,63 @@
     // A curious cat stares: no blinking while it watches.
     // Sometimes a double blink.
     if (t > S.nextBlink + 0.15) S.nextBlink = t + (Math.random() < 0.2 ? 0.12 : 2.5 + Math.random() * 4);
-    if ((curiousNow || hunt > 0.5 || caught) && t > S.nextBlink - 0.2) S.nextBlink = t + 0.5;
+    if ((curiousNow || hunt > 0.5 || caught || yarnNoticed) && t > S.nextBlink - 0.2) S.nextBlink = t + 0.5;
     let blink = t > S.nextBlink ? Math.sin(clamp((t - S.nextBlink) / 0.15, 0, 1) * Math.PI) : 0;
     if (act && act.kind === 'slowBlink' && actU >= 0) blink = Math.max(blink, 0.85 * Math.sin(clamp(actU, 0, 1) * Math.PI));
-    const closed = (pet && !S.cross) || S.sleep > 0.5 || yawnOpen > 0.45 || S.purr > 0.5 || !!(act && act.kind === 'groom' && actEnv > 0.5);
-    // Sulking, the lids hang heavy. Not when sleepy at night: that lasts for hours and squashed
-    // the eyes into ovals the whole evening; the yawns say it is sleepy.
-    const lid = sulking ? 0.6 : 1;
+    const closed = (pet && !S.cross) || S.sleep > 0.5 || yawnOpen > 0.45
+      || (S.purr > 0.5 && LS?.at !== 'cuddle') || !!(act && act.kind === 'groom' && actEnv > 0.5);
+    // Keep the eyes shut through the cuddle, then open them as the body rolls back up.
+    const cuddleOpen = cuddleRise ? smooth(0.95, 0.42, melt) : 1;
+    const yarnEyesClosed = yarnBlink >= 0.99;
+    const eyesClosed = yarnEyesClosed || cuddling || (cuddleRise ? cuddleOpen < 0.12 : closed);
+    // Sulking lowers the lids. Nighttime sleepiness is shown by yawns.
+    const lid = mix(sulking ? 0.6 : 1, 1, yarnSurprise);
     // Excited and curious cats' pupils go wide and round (curious most of all, up to the size set
     // in the 调节 window); cross ones narrow to slits under heavy lids. The pupil never grows past
     // the iris, so it stays a black disc inside a coloured ring.
     // Holding the keyboard it looks up at you round-eyed, as on the sticker.
     const dilate = Math.min(2.6, mix(1 + 0.25 * S.excite, TUNING.pupilSize / 100, Math.max(curious, 0.7 * hunt, caught || innocent ? 0.8 : 0,
       S.nag && S.lying ? 0.85 : 0)) * (1 - 0.5 * cross));
+    const pupilDilation = mix(dilate, Math.max(dilate, 2.2), yarnSurprise);
     // Squeezed shut with glee (^ ^) having a go at the keys; just the one eye for the wink as it
     // holds a paw up at you.
     const glee = !!S.play;
     const winkEye = stopping(t) ? 1 : 0;
+    const yarnExpression = 0.18 * yarnSurprise;
     for (const e of cat.eyes) {
-      const happy = !closed && (glee || e.s === winkEye), shut = closed || happy;
+      const happy = !eyesClosed && (glee || e.s === winkEye), shut = eyesClosed || happy;
       // Yawning wide, the eyes squeeze shut into arches.
       cat.setLid(e, happy || yawnOpen > 0.45 ? -1 : 1);
       e.iris.visible = e.pupil.visible = e.shine.visible = !shut;
       e.arc.visible = shut;
-      e.group.scale.y = (1 - 0.9 * blink) * (1 - 0.42 * cross) * (1 + 0.1 * curious + 0.15 * P.flinch.x + (caught ? 0.12 : innocent ? 0.07 : 0)) * (shut ? 1 : lid);
-      e.group.scale.x = 1 + 0.06 * curious;
-      let px = P.gazeX.x, py = P.gazeY.x;
-      if (focus) {
-        const es = screen(e.group.getWorldPosition(tmp2), V());
-        px = clamp((focus.x - es.x) / 170, -1, 1);
-        py = clamp((focus.y - es.y) / 170, -1, 1);
-      }
-      // Width grows with `dilate`; very wide, the slit's height shrinks a touch so it reads round.
-      e.pupil.scale.x += (0.044 * dilate - e.pupil.scale.x) * approach(10, dt);
-      e.pupil.scale.y += (0.11 - 0.012 * Math.max(0, dilate - 1.5) - e.pupil.scale.y) * approach(10, dt);
+      const opening = cuddling || cuddleRise ? (shut ? 1 : cuddleOpen)
+        : yarnEyesClosed ? 1 : 1 - Math.max(0.9 * blink, yarnBlink);
+      e.group.scale.y = opening * (1 - 0.42 * cross) * (1 + 0.1 * curious + yarnExpression + 0.15 * P.flinch.x + (caught ? 0.12 : innocent ? 0.07 : 0)) * (shut ? 1 : lid);
+      e.group.scale.x = 1 + 0.06 * curious + 0.055 * yarnSurprise;
+      // As the pupil widens, the slit's height shrinks a touch so it reads round.
+      e.pupil.scale.x += (0.044 * pupilDilation - e.pupil.scale.x) * approach(10, dt);
+      e.pupil.scale.y += (0.11 - 0.012 * Math.max(0, pupilDilation - 1.5) - e.pupil.scale.y) * approach(10, dt);
       // A slight inward, downward resting gaze gives the reference's soft cross-eyed look. The
       // pupil may only travel as far as keeps it inside the iris, so a wide one sits near the
       // centre; the limit applies to where it is now, not only where it is heading.
       const room = Math.max(0, e.iris.scale.x - e.pupil.scale.x - 0.012);
-      e.pupil.position.x += (clamp(px * 0.07 - e.s * 0.012, -room, room) - e.pupil.position.x) * approach(22, dt);
+      let x, y;
+      if (trackingObject && !shut) {
+        ({ x, y } = aimPupil(e, focus, room));
+      } else {
+        let px = P.gazeX.x, py = P.gazeY.x;
+        if (focus) {
+          const es = screen(e.group.getWorldPosition(tmp2), V());
+          px = clamp((focus.x - es.x) / 170, -1, 1);
+          py = clamp((focus.y - es.y) / 170, -1, 1);
+        }
+        x = px * 0.07 - e.s * 0.012;
+        y = -py * 0.02;
+      }
+      const response = approach(trackingObject ? 34 : 22, dt);
+      e.pupil.position.x += (clamp(x, -room, room) - e.pupil.position.x) * response;
       e.pupil.position.x = clamp(e.pupil.position.x, -room, room);
-      e.pupil.position.y += (-py * 0.02 - e.pupil.position.y) * approach(22, dt);
+      e.pupil.position.y += (y - e.pupil.position.y) * response;
     }
     // Rubbing flushes the cheeks; the "blush" look keeps a faint flush all the time, and so do
     // the pale coats, a little.
@@ -1358,7 +1640,7 @@
       const d = S.dream, du = d && d.part === 2 + i ? (t - d.t0) / 0.8 : 1;
       const twitch = du < 1 ? Math.sin(du * 24) * (1 - du) * 0.05 : 0;
       return V(twitch, 0, twitch * 0.5);
-    }));
+    }), LS?.at === 'cuddle', hindClench);
 
     // The desk hops when the tail lands; the anger mark pulses on each thump.
     P.desk.step(0, dt);
@@ -1382,7 +1664,10 @@
       fx.sprite.scale.set(s, s, 1);
       fx.sprite.material.opacity = fx.kind === 'bang' ? 1 - smooth(0.5, 1, u) : fx.kind === 'dust' ? 0.9 * (1 - u) : 1 - smooth(0.6, 1, u);
     }
-    for (const arm of cat.arms) { const p = arm.s < 0 ? paws.L : paws.R; cat.updateArm(arm, p.pos, p.limp, p.elbow, p.aim); }
+    for (const arm of cat.arms) {
+      const p = arm.s < 0 ? paws.L : paws.R;
+      cat.updateArm(arm, p.pos, p.limp, p.elbow, p.aim, frontClench);
+    }
 
     for (let i = popups.length - 1; i >= 0; i--) {
       const p = popups[i], age = t - p.t0;
@@ -1555,11 +1840,12 @@
       wake(t); S.cupFall = null; S.cupBackAt = 0; S.cupV = 0; cup.group.position.copy(cup.home); cup.group.rotation.set(0, 0, 0); opts.cup = true;
       startScene('push', t);
     },
+    yarn: t => { wake(t); S.cuddleUntil = 0; S.petUntil = 0; startScene('yarn', t); },
     board: t => { S.lieAt = P.lie.x < 0.05 ? 'board' : S.lieAt; window.cat.sleepNow(); S.sleepPose = 'board'; },
     yawn: t => { S.yawnAt = t; },
     nag: t => { wake(t); S.workStart = Date.now() - TUNING.breakAfter * 60e3 - 1000; S.lastInputWall = Date.now(); },
     nudge: t => { wake(t); startScene('nudge', t); },
-    knead: t => { wake(t); window.cat.pet(true, 180); S.petStart = t - TUNING.purrAfter - 1; setTimeout(() => window.cat.pet(false), 5000); },
+    knead: t => { wake(t); window.cat.pet(true, 180); S.petStart = t - TUNING.purrAfter - 1; setTimeout(() => window.cat.pet(false, 0, false), 5000); },
   };
 
   window.cat = {
@@ -1580,7 +1866,10 @@
       S.mouseDown = down && opts.role !== 'keys';
       S.lastMouse = t;
       if (S.mouseDown) mouseProp.click();
-      if (down) noteInput('mouse');
+      if (down) {
+        noteInput('mouse');
+        if (!S.petting) S.cuddleUntil = 0;
+      }
       wake(t);
     },
     // Canvas CSS pixels; may lie outside the canvas so the eyes keep following the pointer.
@@ -1591,12 +1880,21 @@
     },
     // Called again while held as the pointer moves (the download page does), so only a fresh
     // press counts as one.
-    pet(down, x) {
+    pet(down, x, allowCuddle = true) {
       const t = now();
       const pressed = down && !S.petting;
+      const released = !down && S.petting;
+      const held = t - S.petStart;
       S.petting = down;
       S.petStart = down ? (S.petStart < 0 ? t : S.petStart) : -1;
-      if (!down) return;
+      if (!down) {
+        if (allowCuddle && released && held >= CUDDLE_HOLD && !S.asleep && !S.cross && !S.nag &&
+          t >= S.sulkUntil && t >= S.cuddleUntil && S.lying?.at !== 'cuddle') {
+          S.cuddleUntil = t + CUDDLE_TIME;
+          wake(t);
+        }
+        return;
+      }
       S.petUntil = t + 0.9;
       const hs = screen(cat.head.getWorldPosition(tmp2), V());
       S.petX = (x - hs.x) / 120;
@@ -1673,11 +1971,15 @@
     curiousNow(seconds = 3) { const t = now(); S.curiousUntil = t + seconds; S.busyUntil = t + seconds + 1; wake(t); },
     reset() {
       S.mouseDown = false; S.lastMouse = -100; S.lastKey = -100; S.petting = false; S.petUntil = 0;
+      S.keyGaze = null;
       S.asleep = false; S.sleep = 0; S.lastInput = now(); S.busyUntil = now() + 2;
       S.strokes = []; S.excite = 0; S.act = null; S.nextAct = now() + 4;
-      S.annoy = 0; S.cross = false; S.petStart = -1; S.thumpLift = 0;
+      S.annoy = 0; S.cross = false; S.petStart = -1; S.thumpLift = 0; S.cuddleUntil = 0; S.lieAt = 'board';
       S.moves = []; S.mouseSpeed = 0; S.curiousUntil = -100;
+      S.twitch = null; S.nextTwitch = now() + 3;
       S.scene = null; S.yawn = null; S.yawnAt = 0; S.stretchUntil = 0; S.sleepPose = 'loaf';
+      S.nextYarn = now() + 24;
+      yarn.setOpacity(0);
       S.purr = 0; S.blinkAskAt = 0; S.nag = null; S.sulkUntil = 0; S.cupFall = null; S.cupBackAt = 0; S.cupV = 0;
       S.workStart = Date.now(); S.keysQuietSince = now();
       if (S.clip) { scene.remove(S.clip.sprite); S.clip = null; }
@@ -1689,9 +1991,9 @@
       zs.length = 0;
       popups.length = 0;
       keyboard.releaseAll();
-      for (const k of ['shift', 'hunch', 'squash', 'yaw', 'roll', 'gazeX', 'gazeY', 'ears', 'hunt']) P[k].set(0);
+      for (const k of ['shift', 'hunch', 'squash', 'yaw', 'roll', 'gazeX', 'gazeY', 'ears', 'hunt', 'impactRoll']) P[k].set(0);
       P.pitch.set(-0.28);
-      for (const p of Object.values(paws)) { p.key = null; p.down = false; p.t0 = -100; }
+      for (const p of Object.values(paws)) { p.key = null; p.down = false; p.heavy = false; p.t0 = -100; }
       Object.assign(tailTap, { key: null, t0: -100, down: false, landAt: -100, reach: 0, hover: 0.12 });
     },
     hitTest,

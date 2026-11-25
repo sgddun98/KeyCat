@@ -80,7 +80,7 @@
   // it lies on. Nothing else holds a relaxed body up, so it settles onto that: flat where it
   // touches, bulging out a little to the sides. `tail`, `hind`: see below.
   const lying = { amount: 0, path: null, side: [V(0, 0, 1), V(0, 0, 1)], kS: [1, 1], kF: [1, 1], lead: 0.5,
-    floor: null, tail: null, hind: null };
+    floor: null, tail: null, tailWag: null, tailExtend: 0, hind: null };
   // The spine is sampled from a little behind the seat (for the rounded rump) to past the neck.
   const S0 = -0.45, S1 = 1.5, NS = 40, DS = (S1 - S0) / NS;
   const spine = Array.from({ length: NS + 1 }, () => ({ p: V(0, 0, 0), S: V(1, 0, 0), T: V(0, 1, 0), F: V(0, 0, 1), kS: 1, kF: 1, w: 0, q: new THREE.Quaternion() }));
@@ -231,27 +231,79 @@
   const padGeo = new THREE.CircleGeometry(1, 20);
   padGeo.rotateX(Math.PI / 2);
   const PADS = [[0, -0.18, 0.4, 0.32], [-0.6, 0.3, 0.17, 0.2], [-0.22, 0.56, 0.17, 0.2], [0.22, 0.56, 0.17, 0.2], [0.6, 0.3, 0.17, 0.2]];
+  function placePawPad(pad, x, z) {
+    pad.position.set(x * (1 + 0.12 * z), -0.45 * Math.sqrt(Math.max(0, 1 - x * x - z * z)) - 0.012, z);
+  }
   function makePaw(parent, order) {
-    const paw = new THREE.Mesh(pawGeo, pawMat);
+    const shape = pawGeo.clone();
+    const paw = new THREE.Mesh(shape, pawMat);
     paw.renderOrder = order + 2;
-    const rim = new THREE.Mesh(pawGeo, pawRimMat);
+    const rim = new THREE.Mesh(shape, pawRimMat);
     rim.renderOrder = order - 2;
     // Creases run back from the front edge; they live on the paw so they turn and scale with it.
-    for (const x of [-0.3, 0.3]) {
-      const toe = new THREE.Mesh(toeGeo, toeMat);
+    const creases = [-0.3, 0.3].map(x => {
+      const toe = new THREE.Mesh(toeGeo.clone(), toeMat);
       toe.position.set(x, 0.66, 0.72);
       toe.renderOrder = order + 3;
       paw.add(toe);
-    }
-    for (const [x, z, rx, rz] of PADS) {
-      const pad = new THREE.Mesh(padGeo, padMat);
-      pad.position.set(x * (1 + 0.12 * z), -0.45 * Math.sqrt(Math.max(0, 1 - x * x - z * z)) - 0.012, z);
+      return toe;
+    });
+    const pads = PADS.map(([x, z, rx, rz]) => {
+      const pad = new THREE.Mesh(padGeo.clone(), padMat);
+      placePawPad(pad, x, z);
       pad.scale.set(rx, 1, rz);
       pad.renderOrder = order + 3;
       paw.add(pad);
-    }
+      return pad;
+    });
+    Object.assign(paw.userData, { creases, pads, clench: 0, padDirection: 1 });
     parent.add(rim, paw);
     return { paw, rim };
+  }
+  const pawPoint = V(), markOrigin = V();
+  function bendPawPoint(point, amount, direction) {
+    // The toes fold toward the sole. The heel and the wrist stay where they are.
+    const toe = Math.max(0, point.z * direction);
+    const curl = amount * toe * toe;
+    point.x *= 1 - 0.25 * curl;
+    point.y -= 0.68 * curl;
+    point.z -= 0.42 * curl * direction;
+  }
+  function bendPawMark(mark, rest, amount, direction) {
+    markOrigin.copy(mark.position);
+    bendPawPoint(mark.position, amount, direction);
+    const pos = mark.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pawPoint.fromBufferAttribute(rest, i).multiply(mark.scale).add(markOrigin);
+      bendPawPoint(pawPoint, amount, direction);
+      pawPoint.sub(mark.position).divide(mark.scale);
+      pos.setXYZ(i, pawPoint.x, pawPoint.y, pawPoint.z);
+    }
+    pos.needsUpdate = true;
+    mark.geometry.computeBoundingSphere();
+  }
+  function shapePaw(paw, amount, direction = 1) {
+    const data = paw.userData;
+    if (data.clench === amount && data.padDirection === direction) return;
+    const pos = paw.geometry.attributes.position, rest = pawGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pawPoint.fromBufferAttribute(rest, i);
+      bendPawPoint(pawPoint, amount, direction);
+      pos.setXYZ(i, pawPoint.x, pawPoint.y, pawPoint.z);
+    }
+    pos.needsUpdate = true;
+    paw.geometry.computeBoundingSphere();
+    data.creases.forEach((crease, i) => {
+      crease.position.set(i === 0 ? -0.3 : 0.3, 0.66, 0.72);
+      bendPawMark(crease, toeGeo.attributes.position, amount, direction);
+    });
+    data.pads.forEach((pad, i) => {
+      const [x, z] = PADS[i];
+      placePawPad(pad, x * direction, z * direction);
+      bendPawMark(pad, padGeo.attributes.position, amount, direction);
+    });
+    data.clench = amount;
+    data.padDirection = direction;
   }
   const hind = [-1, 1].map(s => {
     const { paw, rim } = makePaw(body, 0);
@@ -358,8 +410,9 @@
   }
   // Hind paws can twitch (in a dream); `offsets` are added to each one's place, in sitting terms
   // sitting and body space lying.
-  function kickHind(offsets) {
+  function kickHind(offsets, turnPads = false, clench = 0) {
     const w = lieAt(0.1);
+    const padDirection = turnPads ? -1 : 1;
     hind.forEach((paw, i) => {
       legLocal.copy(paw.userData.home).add(offsets[i]);
       place(legLocal.x, legLocal.y, legLocal.z, paw.position);
@@ -378,6 +431,8 @@
       }
       mid.lerpVectors(knee, paw.position, 0.5);
       paw.scale.set(0.17, 0.1, 0.15);
+      // Turn the exposed pad pattern to match the forepaws while keeping the leg extended.
+      shapePaw(paw, clench, padDirection);
       paw.userData.rim.scale.copy(paw.scale).addScalar(0.016);
       paw.userData.rim.position.copy(paw.position);
       paw.userData.rim.quaternion.copy(paw.quaternion);
@@ -944,7 +999,7 @@
     return best;
   }
 
-  function updateArm(arm, pawPos, hang = 0, elbow = null, aim = null) {
+  function updateArm(arm, pawPos, hang = 0, elbow = null, aim = null, clench = 0) {
     attach(arm.shoulderLocal, arm.shoulder);
     arm.hand.copy(pawPos);
     const a = arm.shoulder, b = arm.hand;
@@ -1005,6 +1060,7 @@
       }
       arm.paw.position.addScaledVector(armTmp, past * w);
     }
+    shapePaw(arm.paw, clench);
     arm.rim.position.copy(arm.paw.position);
     arm.rim.quaternion.copy(arm.paw.quaternion);
     arm.rim.scale.copy(arm.paw.scale).addScalar(0.013);
@@ -1056,7 +1112,7 @@
       local.lerpVectors(attached, loose, K.smooth(0.1, 0.7, w) * (1 - lie));
       if (lie > 0 && i > 0 && lying.tail) {
         tmpTail.copy(lying.tail[i - 1]).add(body.position);
-        local.lerp(tmpTail, lie * (i === 1 ? 0.6 : 1));
+        local.lerp(tmpTail, lie * (i === 1 && lying.tailWag === null ? 0.6 : 1));
       }
     }
     if (reach > 0 && reachTip) {
@@ -1070,6 +1126,8 @@
     // slow sweep from side to side and a curl that grows towards the tip, both starting at the
     // root and travelling out. Lying, the sweep is smaller and the tip does most of the moving.
     const g = chainGoal, amp = sway * (1 - 0.45 * lie), tip = amp + 0.6 * lie * (1 - sleep);
+    const hips = lie > 0 && (lying.tailWag || lying.tailExtend) ? frameAt(TAIL_ROOT_LIE.y) : null;
+    const leftSweep = hips ? Math.max(0, lying.tailWag) / (Math.PI / 2) : 0;
     tailWant.getPointAt(0, g[0]);
     bendQ.identity();
     for (let i = 1; i <= TAIL_N; i++) {
@@ -1081,7 +1139,25 @@
       bendAxis.crossVectors(linkDir, Y_UP);
       if (bendAxis.lengthSq() < 1e-4) bendAxis.set(0, 0, 1);
       bendQ.premultiply(bendStep.setFromAxisAngle(bendAxis.normalize(), 0.06 * tip * w * w * Math.sin(time * 1.3 - i * 0.6)));
-      g[i].copy(g[i - 1]).addScaledVector(linkDir.applyQuaternion(bendQ), LINK);
+      linkDir.applyQuaternion(bendQ);
+      if (hips) {
+        const tipWeight = smooth(0.6, 0.90, w);
+        const pitch = linkDir.dot(hips.T);
+        linkDir.addScaledVector(hips.T, (0.10 - pitch) * lying.tailExtend * tipWeight).normalize();
+        // Sweep the base sideways and gradually turn the curl around the spine at the tip.
+        bendAxis.lerpVectors(hips.F, hips.T, smooth(0.30, 0.72, w)).normalize();
+        const sweepWeight = mix(smooth(0.08, 0.90, w), tipWeight, 0.46);
+        const sweep = lying.tailWag * (leftSweep > 0 ? 0.72 : 1);
+        linkDir.applyAxisAngle(bendAxis, sweep * sweepWeight);
+        if (leftSweep > 0) {
+          // Open the middle and tip into one arc, keeping a little curl at the tip.
+          const arcAngle = 1.32 * smooth(0.18, 1, w);
+          bendAxis.copy(hips.S).multiplyScalar(0.59).addScaledVector(hips.F, 0.81)
+            .multiplyScalar(Math.sin(arcAngle)).addScaledVector(hips.T, -Math.cos(arcAngle));
+          linkDir.lerp(bendAxis, 0.90 * leftSweep ** 1.5 * smooth(0.18, 0.65, w)).normalize();
+        }
+      }
+      g[i].copy(g[i - 1]).addScaledVector(linkDir, LINK);
     }
 
     // The links: pulled towards their places (harder near the root), carrying on with what speed
@@ -1226,8 +1302,12 @@
 
   // The head rides on the bent neck; called after `bend` changes.
   const NECK = headPivot.position.clone();
-  function placeHead() {
+  function placeHead(followSpine) {
     place(NECK.x, NECK.y, NECK.z, headPivot.position);
+    if (followSpine) {
+      const [a, b, f] = sampleAt(NECK.y);
+      headPivot.quaternion.copy(a.q).slerp(b.q, f);
+    }
     // Sitting, the head grows out of the chest with no line between them. Lying over the keys
     // the head is in front of the body rising behind it, so its outline is drawn over the body
     // too (as the ears' always is), and head and ears read as one shape against the back.
