@@ -954,6 +954,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ("奶牛猫", json!("tuxedo")),
         ("橘猫", json!("orange")),
         ("蓝灰猫", json!("grey")),
+        ("英短蓝金渐层", json!("britishBlueGolden")),
         ("白猫", json!("white")),
         ("三花猫", json!("calico")),
         ("暹罗猫", json!("siamese")),

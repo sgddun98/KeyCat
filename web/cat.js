@@ -11,6 +11,7 @@
   // Outlines draw first without writing depth, so any fur drawn later covers them: the cream
   // line shows only around the outer silhouette, never where head, body and tail meet.
   const rimMat = K.back('#f6f3e8');
+  rimMat.visible = false;
   rimMat.depthWrite = false;
   const armRimMat = K.withArmRootPush(K.back('#8a8984'));
   const pawMat = K.flat('#f7f6f0');
@@ -80,7 +81,7 @@
   // it lies on. Nothing else holds a relaxed body up, so it settles onto that: flat where it
   // touches, bulging out a little to the sides. `tail`, `hind`: see below.
   const lying = { amount: 0, path: null, side: [V(0, 0, 1), V(0, 0, 1)], kS: [1, 1], kF: [1, 1], lead: 0.5,
-    floor: null, tail: null, tailWag: null, tailExtend: 0, hind: null };
+    floor: null, tail: null, tailWag: null, tailBaseFollow: 0, tailExtend: 0, hind: null };
   // The spine is sampled from a little behind the seat (for the rounded rump) to past the neck.
   const S0 = -0.45, S1 = 1.5, NS = 40, DS = (S1 - S0) / NS;
   const spine = Array.from({ length: NS + 1 }, () => ({ p: V(0, 0, 0), S: V(1, 0, 0), T: V(0, 1, 0), F: V(0, 0, 1), kS: 1, kF: 1, w: 0, q: new THREE.Quaternion() }));
@@ -583,7 +584,7 @@
   // Bigger ears (the Devon's, `k` > 1) grow taller and broader above the base and lean further
   // out (`earTilt`); the fillet is worked out for each, against the head as that ear sees it.
   const EAR_AT = V(0.26, 0.21, -0.06), EAR_STRETCH = 1.12;
-  const earTilt = k => 0.2 + 0.5 * (k - 1);
+  const earTilt = k => 0.2 + 0.5 * Math.max(0, k - 1);
   const earTop = [[0.225, 0.1], [0.185, 0.19], [0.135, 0.27], [0.08, 0.33], [0.035, 0.36], [0, 0.37]];
   // The head's outer outline (see headGeo, `grow` for its rim) in the right ear's own frame, as
   // radius for height.
@@ -691,6 +692,7 @@
 
   // Eyes sit on the face surface and face along its normal.
   const disc = new THREE.CircleGeometry(1, 36);
+  const IRIS_HEIGHT = 0.14;
   const dizzyEyeMat = new THREE.MeshBasicMaterial({ map: K.fxTexture('dizzyEye'), depthTest: false, transparent: true });
   const eyes = [-1, 1].map(s => {
     const lx = s * 0.235, ly = 0.04;
@@ -701,7 +703,7 @@
     g.quaternion.setFromUnitVectors(V(0, 0, 1), normal);
     const eyeMat = eyeMats[s < 0 ? 0 : 1];
     const iris = new THREE.Mesh(disc, eyeMat);
-    iris.scale.set(0.155, 0.14, 1);
+    iris.scale.set(0.155, IRIS_HEIGHT, 1);
     iris.renderOrder = 10;
     const pupil = new THREE.Mesh(disc, pupilMat);
     pupil.scale.set(0.05, 0.11, 1);
@@ -1135,6 +1137,7 @@
   function updateTail(time, sway, sleep, thump = 0, lift = 0, lash = 0, reach = 0, reachTip = null, lie = 0, wrap = 0, dt = 1 / 60) {
     body.updateMatrixWorld();
     const want = tailWant.points;
+    const baseFollow = lying.tailWag === null ? mix(0.6, 1, lying.tailBaseFollow) : 1;
     for (let i = 0; i < tailPts.length; i++) {
       const w = i / (tailPts.length - 1);
       const local = want[i].lerpVectors(tailPts[i], tailSleep[i], Math.max(sleep, wrap));
@@ -1151,7 +1154,7 @@
       local.lerpVectors(attached, loose, K.smooth(0.1, 0.7, w) * (1 - lie));
       if (lie > 0 && i > 0 && lying.tail) {
         tmpTail.copy(lying.tail[i - 1]).add(body.position);
-        local.lerp(tmpTail, lie * (i === 1 && lying.tailWag === null ? 0.6 : 1));
+        local.lerp(tmpTail, lie * (i === 1 ? baseFollow : 1));
       }
     }
     if (reach > 0 && reachTip) {
@@ -1243,6 +1246,11 @@
     grey: { fur: '#9aa7b8', ink: '#6a7687', lid: '#3d4450', rim: '#f6f5f0', arm: '#6f7b8c', paw: '#f2f1ec', toe: '#c3c8ce', whisker: '#f4f2ea', eye: 'copper',
       light: '#c9d1dc', muzzle: 1, bib: 0.6, nose: '#8a8494', mouth: '#5a6575', inner: '#d9b8bf', innerAmt: 1, shade: 0.55,
       tabby: '#7b889a', cheek: 0.3 },
+    britishBlueGolden: { fur: '#ddbd9c', tip: '#8d9bb0', light: '#fff0dc', dark: '#65738b', brow: 0.82,
+      ink: '#b99c87', lid: '#7d7782', rim: '#f5eddf', arm: '#b89d85', paw: '#f1dac0', toe: '#c9aa95',
+      pad: '#d69ca1', whisker: '#fff3e5', eye: 'olive', nose: '#c58385', mouth: '#9b7376',
+      muzzle: 0.92, inner: '#e9b3b4', innerAmt: 0.88, shade: 0.45, cheek: 0.18,
+      ears: 0.80, headWidth: 1.075, irisHeight: 0.15 },
     white: { fur: '#fbf9f3', ink: '#b3a594', lid: '#8a7f72', rim: '#8f7f6e', arm: '#bdb09f', paw: '#fbf9f3', toe: '#e6cfc8', whisker: '#b6ada0', eye: 'blue',
       nose: '#f29ca0', mouth: '#c99c94', inner: '#f7bfc2', innerAmt: 1, shade: 0.5, cheek: 0.4 },
     calico: { fur: '#fbf8f1', ink: '#b3a594', lid: '#6e5a4e', rim: '#8f7f6e', arm: '#bdb09f', paw: '#fbf8f1', toe: '#e6cfc8', whisker: '#b6ada0', eye: 'gold',
@@ -1266,7 +1274,7 @@
       light: '#f0e5d0', muzzle: 1, bib: 0.7, nose: '#c27a66', mouth: '#5e4836', inner: '#e2ad98', innerAmt: 1, shade: 0.55,
       tabby: '#6b5038', striped: true, cheek: 0.25 },
   };
-  const EYES = { gold: '#dcb64a', green: '#93c255', blue: '#6eb2e6', amber: '#e59a32', copper: '#d9792f' };
+  const EYES = { gold: '#dcb64a', green: '#93c255', olive: '#b0c378', blue: '#6eb2e6', amber: '#e59a32', copper: '#d9792f' };
   // Catchlight dots per style: [x (outer side +), y, radius].
   const SHINES = {
     none: [],
@@ -1293,9 +1301,10 @@
     const striped = c.tabby && (look.pattern === 'tabby' || (look.pattern === 'auto' && c.striped));
     const solid = look.style === '3d';
     coat.cheek = c.cheek || 0;
-    K.setFur({ ...c, dark: c.tabby || c.fur, stripes: striped ? 1 : 0, softPoints: look.softPoints ? 1 : 0, shade: solid ? c.shade : 0 });
+    K.setFur({ ...c, dark: c.tabby || c.dark || c.fur, stripes: striped ? 1 : 0, softPoints: look.softPoints ? 1 : 0, shade: solid ? c.shade : 0 });
     // Big ears lean further out, set low and wide on the head as a Devon's are.
     for (const e of ears) placeEar(e, c.ears || 1);
+    head.scale.x = c.headWidth || 1;
     K.mouseProp.setStyle(look.style);
     K.mouseProp.setCable(look.cable !== false);
     K.keyboard.setTheme(look.board);
@@ -1317,6 +1326,7 @@
     eyeMats[1].color.set(EYES[eye === 'odd' ? 'gold' : eye] || EYES.gold);
     lidMat.color.set(c.lid || eyeMats[0].color);
     for (const e of eyes) {
+      e.iris.scale.y = c.irisHeight || IRIS_HEIGHT;
       const dots = SHINES[look.shine] || SHINES.classic;
       e.shine.children.forEach((d, i) => {
         d.visible = i < dots.length;

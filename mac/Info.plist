@@ -12,6 +12,8 @@
     <string>KeyCat 黑猫</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>KeyCat.icns</string>
     <key>CFBundleShortVersionString</key>
     <string>1.1.2</string>
     <key>CFBundleVersion</key>

@@ -58,10 +58,8 @@
     return new THREE.Mesh(g, K.flat(color));
   }
   const caseMesh = slab(W, D, H, 0.07, '#252523', 0);
-  const caseRim = slab(W + 0.05, D + 0.05, H + 0.02, 0.09, '#f4f1e6', -0.01);
-  caseRim.material.side = THREE.BackSide;
   const plate = slab(W - 0.05, D - 0.05, 0.01, 0.05, '#2b2b28', H);
-  board.add(caseRim, caseMesh, plate);
+  board.add(caseMesh, plate);
 
   // A keycap is a 4-sided frustum turned 45°, scaled to the key width: sloped sides, flat top.
   const capGeo = new THREE.CylinderGeometry(Math.SQRT1_2 * 0.8, Math.SQRT1_2, 1, 4, 1);
@@ -210,7 +208,7 @@
   button.scale.set(MW * 0.78, 1, ML * 0.82);
   button.position.set(0.004, onTop(0.04, ML * 0.4) + 0.001, ML * 0.08);
   button.renderOrder = 5;
-  shape.add(shell('#f4f1e6', 0.03, -2), shell('#1d1d1b', 0.013, -1), dome, button, seam.mesh, wheel);
+  shape.add(shell('#1d1d1b', 0.013, -1), dome, button, seam.mesh, wheel);
   // Each click sends a ring out across the desk from under the mouse, in the keys' lit green.
   const rippleMat = new THREE.MeshBasicMaterial({ color: '#b9d84f', transparent: true, opacity: 0, depthWrite: false });
   const ripple = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 40).rotateX(-Math.PI / 2), rippleMat);
@@ -285,8 +283,7 @@
   };
 
   // A mug of coffee on the desk by the cat's side, clear of the keyboard and the mouse, for the cat
-  // to push off the edge. Drawn like the rest of the desk: flat colour, a dark ink line and a cream
-  // sticker edge. Blue, so it never reads as the white mouse; the handle faces out to the left,
+  // to push off the edge. It has a dark ink line and a blue body. The handle faces out to the left,
   // so its loop shows in silhouette, and steam curls up while it sits there. Fades so it can fall
   // out of sight and come back later.
   const cup = new THREE.Group();
@@ -297,7 +294,7 @@
     const fade = m => Object.assign(m, { transparent: true });
     const R_CUP = 0.15, H_CUP = 0.29;
     const mugMat = fade(K.flat('#9fcdea')), lipMat = fade(K.flat('#f8f7ef')), inkMat = fade(K.back('#1d1d1b')),
-      rimMat = fade(K.back('#f4f1e6')), coffeeMat = fade(K.flat('#6f4a30')), cremaMat = fade(K.flat('#a77a52')),
+      coffeeMat = fade(K.flat('#6f4a30')), cremaMat = fade(K.flat('#a77a52')),
       printMat = fade(K.flat('#f8f7ef'));
     const mugGeo = new THREE.CylinderGeometry(R_CUP, R_CUP * 0.9, H_CUP, 36);
     mugGeo.translate(0, H_CUP / 2, 0);
@@ -306,10 +303,6 @@
     ink.scale.set(1.1, 1.04, 1.1);
     ink.position.y = -0.005;
     ink.renderOrder = -1;
-    const rim = new THREE.Mesh(mugGeo, rimMat);
-    rim.scale.set(1.22, 1.09, 1.22);
-    rim.position.y = -0.012;
-    rim.renderOrder = -2;
     // The open top: a thick cream lip round dark coffee with a paler crema ring.
     const lip = new THREE.Mesh(new THREE.TorusGeometry(R_CUP - 0.012, 0.014, 8, 36).rotateX(Math.PI / 2), lipMat);
     lip.position.y = H_CUP;
@@ -326,9 +319,6 @@
     const handleInk = new THREE.Mesh(handleArc(0.03), inkMat);
     handleInk.position.copy(handle.position);
     handleInk.renderOrder = -1;
-    const handleRim = new THREE.Mesh(handleArc(0.042), rimMat);
-    handleRim.position.copy(handle.position);
-    handleRim.renderOrder = -2;
     // A paw print on the side towards the viewer: one pad and three toes.
     const print = new THREE.Group();
     const dot = (x, y, rx, ry) => {
@@ -339,7 +329,7 @@
     dot(0, -0.012, 0.036, 0.03);
     dot(-0.038, 0.03, 0.014, 0.017); dot(0, 0.045, 0.014, 0.017); dot(0.038, 0.03, 0.014, 0.017);
     print.position.set(0.01, H_CUP * 0.47, R_CUP * 0.96 + 0.004);
-    cup.add(handleRim, rim, handleInk, ink, mug, handle, lip, coffee, crema, print);
+    cup.add(handleInk, ink, mug, handle, lip, coffee, crema, print);
     // Steam: two thin wavy wisps rising off the coffee, drifting and fading on a loop.
     const steamMat = new THREE.MeshBasicMaterial({ color: '#fbfaf3', transparent: true, opacity: 0.85, depthWrite: false });
     for (const x of [-0.035, 0.04]) {
@@ -347,7 +337,8 @@
       cup.add(tube.mesh);
       steam.push({ tube, x, phase: x > 0 ? 1.7 : 0 });
     }
-    cup.userData.mats = [mugMat, lipMat, inkMat, rimMat, coffeeMat, cremaMat, printMat];
+    cup.userData.mats = [mugMat, lipMat, inkMat, coffeeMat, cremaMat, printMat];
+    cup.userData.hitMesh = mug;
     cup.userData.top = H_CUP;
   }
   K.scene.add(cup);
@@ -355,7 +346,7 @@
     group: cup,
     home: CUP_HOME,
     radius: 0.15,
-    hitMeshes: [cup.children[4]],
+    hitMeshes: [cup.userData.hitMesh],
     opacity: 1,
     setOpacity(a) {
       this.opacity = a;

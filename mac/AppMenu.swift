@@ -7,6 +7,7 @@ final class MenuAction: NSObject {
 }
 
 let coatOptions = [("黑猫", "black"), ("奶牛猫", "tuxedo"), ("橘猫", "orange"), ("蓝灰猫", "grey"),
+                   ("英短蓝金渐层", "britishBlueGolden"),
                    ("白猫", "white"), ("三花猫", "calico"), ("暹罗猫", "siamese"), ("布偶猫", "ragdoll"),
                    ("德文卷毛猫", "devon"), ("美短银虎斑", "silver"), ("狸花猫", "lihua")]
 /// Coats with colourpoints (dark face, ears, legs and tail), which get the soft-points choice.
@@ -82,6 +83,7 @@ extension AppDelegate {
         menu.addItem(.separator())
         menu.addItem(toggle("隐私模式（不显示键名）", privacy) { $0.privacy.toggle() })
         menu.addItem(toggle("鼠标穿透（点击直接落到下层窗口）", clickThrough) { $0.clickThrough.toggle() })
+        menu.addItem(toggle("在 Dock 中显示", showDockIcon) { $0.showDockIcon.toggle() })
         menu.addItem(item("回到右下角") { $0.resetPosition() })
         menu.addItem(item(panel.isVisible ? "隐藏" : "显示") { $0.toggleVisible() })
         menu.addItem(.separator())
@@ -212,6 +214,7 @@ extension AppDelegate {
 
     func toggleVisible() {
         let show = !panel.isVisible
+        if !show { endPassThroughPet(allowCuddle: false) }
         for cat in cats { if show { cat.panel.orderFrontRegardless() } else { cat.panel.orderOut(nil) } }
     }
 

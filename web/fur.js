@@ -13,14 +13,17 @@
     uPatchA: { value: C('#151515') },    // calico patches
     uPatchB: { value: C('#151515') },
     uPoint: { value: C('#151515') },     // colourpoint mask, ears, legs and tail
+    uTip: { value: C('#151515') },       // cool tipping on a shaded coat
     uInner: { value: C('#151515') },     // inner ear
     uStripes: { value: 0 },
+    uBrow: { value: 0 },
     uMuzzle: { value: 0 },
     uBib: { value: 0 },
     uCalico: { value: 0 },
     uTuxedo: { value: 0 },
     uPoints: { value: 0 },
     uSoftPoints: { value: 0 },  // 1: the colourpoints fade in gradually, as in 1.0.4
+    uShadedCoat: { value: 0 },
     uInnerAmt: { value: 0 },
     uShade: { value: 0 },
   };
@@ -47,8 +50,8 @@
     }`;
 
   const fragment = `
-    uniform vec3 uFur, uLight, uDark, uPatchA, uPatchB, uPoint, uInner;
-    uniform float uStripes, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uSoftPoints, uInnerAmt, uShade;
+    uniform vec3 uFur, uLight, uDark, uPatchA, uPatchB, uPoint, uTip, uInner;
+    uniform float uStripes, uBrow, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uSoftPoints, uShadedCoat, uInnerAmt, uShade;
     varying vec3 vRest;
     varying vec3 vNormal;
     varying float vAlong;
@@ -72,6 +75,31 @@
     void main() {
       vec3 col = uFur;
       vec3 p = vRest;
+      if (uShadedCoat > 0.0) {
+        float tip = 0.0, cream = 0.0;
+        #ifdef HEAD
+          float crown = p.y + 0.21 * abs(p.x) - 0.15 * p.z;
+          tip = smoothstep(0.06, 0.51, crown);
+          tip = max(tip, 0.38 * smoothstep(0.45, 0.96, abs(p.x)));
+          cream = 0.32 * smoothstep(0.20, 0.88, p.z) * (1.0 - smoothstep(-0.62, -0.30, p.y));
+        #endif
+        #ifdef BODY
+          float chest = p.z / max(length(p.xz), 0.001);
+          tip = 1.0 - smoothstep(-0.57, 0.67, chest);
+          cream = 0.82 * smoothstep(0.37, 0.88, chest);
+        #endif
+        #ifdef EAR
+          tip = mix(0.57, 0.94, smoothstep(0.02, 0.32, p.y));
+        #endif
+        #ifdef TAIL
+          tip = mix(0.43, 1.0, smoothstep(0.08, 0.93, vAlong));
+        #endif
+        #ifdef ARM
+          tip = 0.35 * (1.0 - smoothstep(0.08, 0.80, vAlong));
+          cream = 0.34 * smoothstep(0.56, 1.0, vAlong);
+        #endif
+        col = mix(mix(uFur, uTip, tip), uLight, cream);
+      }
       // \`point\`: how far into the colourpoint this spot is.
       float light = 0.0, dark = 0.0, inner = 0.0, point = 0.0;
       #ifdef HEAD
@@ -95,6 +123,13 @@
           mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.74, 0.02), vec2(0.98, 0.1), 0.045, 0.35));
           mk = max(mk, stroke(vec2(abs(q.x), q.y), vec2(0.76, -0.17), vec2(0.99, -0.15), 0.04, 0.35));
           dark = max(dark, mk * uStripes);
+          // A narrow, soft fur marking rising from the inner side of each eye.
+          float browHeight = smoothstep(0.36, 0.43, q.y) * (1.0 - smoothstep(0.60, 0.74, q.y));
+          float rise = smoothstep(0.36, 0.74, q.y);
+          float browX = mix(0.32, 0.37, rise);
+          float browWidth = mix(0.034, 0.016, rise);
+          float brow = (1.0 - smoothstep(browWidth * 0.64, browWidth, abs(abs(q.x) - browX))) * browHeight;
+          dark = max(dark, brow * smoothstep(0.2, 0.55, p.z) * uBrow);
         }
         // Calico: an orange patch over the left brow and ear, a black one over the right.
         float pa = blob3(p, vec3(-0.6, 0.7, 0.35), 0.62);
@@ -186,7 +221,8 @@
 
   // Writes a coat: colours plus how strongly each marking shows (0 hides it).
   K.setFur = f => {
-    for (const k of ['fur', 'light', 'dark', 'patchA', 'patchB', 'point', 'inner']) U['u' + k[0].toUpperCase() + k.slice(1)].value.set(f[k] || f.fur);
-    for (const k of ['stripes', 'muzzle', 'bib', 'calico', 'tuxedo', 'points', 'softPoints', 'innerAmt', 'shade']) U['u' + k[0].toUpperCase() + k.slice(1)].value = f[k] || 0;
+    for (const k of ['fur', 'light', 'dark', 'patchA', 'patchB', 'point', 'tip', 'inner']) U['u' + k[0].toUpperCase() + k.slice(1)].value.set(f[k] || f.fur);
+    for (const k of ['stripes', 'brow', 'muzzle', 'bib', 'calico', 'tuxedo', 'points', 'softPoints', 'innerAmt', 'shade']) U['u' + k[0].toUpperCase() + k.slice(1)].value = f[k] || 0;
+    U.uShadedCoat.value = f.tip ? 1 : 0;
   };
 })();

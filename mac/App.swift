@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var eventTap: CFMachPort?
     var keyboardAllowed = true
     var pendingDelta = CGPoint.zero
+    private weak var passThroughPetCat: CatPanel?
     var heldModifiers = Set<Int>()
     /// Keys the page thinks are down, with when they went down (see releaseLostKeys).
     var heldKeys: [Int: Date] = [:]
@@ -107,12 +108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { defaults.bool(forKey: "privacy") }
         set { defaults.set(newValue, forKey: "privacy") }
     }
-    /// Clicks always pass through to the window underneath; the menu is then reached from the menu bar.
+    /// Clicks reach the window underneath. A passive mouse monitor also lets the head react.
     var clickThrough: Bool {
         get { defaults.bool(forKey: "clickThrough") }
         set {
             defaults.set(newValue, forKey: "clickThrough")
+            if !newValue { endPassThroughPet(allowCuddle: false) }
             for cat in cats { cat.updateMouseTarget() }
+        }
+    }
+    var showDockIcon: Bool {
+        get { defaults.object(forKey: "showDockIcon") as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: "showDockIcon")
+            NSApp.setActivationPolicy(newValue ? .regular : .accessory)
         }
     }
     var sleepAfter: Int {
@@ -145,14 +154,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
         cats = [CatPanel(app: self, index: 0)]
         applyScale(scale, keepOrigin: false)
         panel.orderFrontRegardless()
         if secondCat { setSecondCat(true) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "🐈‍⬛"
+        if let url = Bundle.main.url(forResource: "MenuBar", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 18, height: 18)
+            icon.isTemplate = true
+            statusItem.button?.image = icon
+            statusItem.button?.imagePosition = .imageLeft
+        }
+        updateStatusTitle()
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -188,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if panel.isVisible { cat.panel.orderFrontRegardless() }
         } else if !on, cats.count > 1 {
             let cat = cats.removeLast()
+            if passThroughPetCat === cat { endPassThroughPet(allowCuddle: false) }
             cat.panel.orderOut(nil)
             cat.webView.configuration.userContentController.removeScriptMessageHandler(forName: "cat")
             main.js("cat.friend(null)")
@@ -340,6 +357,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Input
 
+    func endPassThroughPet(allowCuddle: Bool) {
+        passThroughPetCat?.js("cat.pet(false, 0, \(allowCuddle))")
+        passThroughPetCat = nil
+    }
+
+    private func observeMouseButton(_ event: NSEvent) {
+        let down = [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type)
+        if event.type == .leftMouseUp { endPassThroughPet(allowCuddle: true) }
+        if clickThrough, event.type == .leftMouseDown {
+            endPassThroughPet(allowCuddle: false)
+            let screen = event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+            let candidates = cats.filter {
+                $0.pageReady && $0.panel.isVisible && $0.panel.isOnActiveSpace && $0.panel.frame.contains(screen)
+            }.sorted { $0.panel.orderedIndex < $1.panel.orderedIndex }
+            // If panels overlap, the live hit can identify a head behind transparent canvas.
+            if let target = candidates.first(where: { $0.hit == "pet" && $0.lastCursor == $0.pagePoint(screen: screen) })
+                ?? candidates.first {
+                passThroughPetCat = target
+                let point = target.pagePoint(screen: screen)
+                let x = Int(point.x), y = Int(point.y)
+                target.js("if (cat.hitTest(\(x),\(y)) === 'pet') cat.pet(true,\(x)); else cat.mouseButton(true)")
+                for cat in cats where cat !== target { cat.js("cat.mouseButton(true)") }
+                return
+            }
+        }
+        js("cat.mouseButton(\(down))")
+    }
+
     func installMouseMonitors() {
         let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         NSEvent.addGlobalMonitorForEvents(matching: moves) { [weak self] event in
@@ -354,10 +399,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let buttons: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp]
         NSEvent.addGlobalMonitorForEvents(matching: buttons) { [weak self] event in
+            MainActor.assumeIsolated { self?.observeMouseButton(event) }
+        }
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
             MainActor.assumeIsolated {
-                let down = [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type)
-                self?.js("cat.mouseButton(\(down))")
+                if let self, self.clickThrough { self.observeMouseButton(event) }
             }
+            return event
         }
     }
 
@@ -427,7 +475,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func updateStatusTitle() {
-        statusItem?.button?.title = keyboardAllowed ? "🐈‍⬛" : "🐈‍⬛⚠️"
+        guard let button = statusItem?.button else { return }
+        button.title = keyboardAllowed ? "" : "⚠️"
+        let label = keyboardAllowed ? "KeyCat" : "KeyCat：需要输入监控权限"
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
     }
 
     /// Troubleshooting line in ~/Library/Application Support/KeyCat/status.txt:
