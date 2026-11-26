@@ -27,11 +27,19 @@
   const ALIAS = {
     Backquote: 'Escape', Delete: 'Backspace', Fn: 'ControlLeft', ControlRight: 'MetaRight',
     AltRight: 'MetaRight', IntlBackslash: 'ShiftLeft', NumpadEnter: 'Enter', ContextMenu: 'MetaRight',
+    // The edit keys: on a 60% board they are fn with the arrows, and Insert (Help on the Mac) sits
+    // by Delete.
+    Home: 'ArrowLeft', End: 'ArrowRight', PageUp: 'ArrowUp', PageDown: 'ArrowDown', Insert: 'Backspace', Help: 'Backspace',
   };
   for (let i = 1; i <= 12; i++) ALIAS['F' + i] = 'Digit' + (i === 10 ? 0 : i === 11 ? 'Minus' : i === 12 ? 'Equal' : i);
   ALIAS.F11 = 'Minus'; ALIAS.F12 = 'Equal';
   for (let i = 0; i <= 9; i++) ALIAS['Numpad' + i] = 'Digit' + i;
   Object.assign(ALIAS, { NumpadAdd: 'Equal', NumpadSubtract: 'Minus', NumpadMultiply: 'Digit8', NumpadDivide: 'Slash', NumpadDecimal: 'Period', NumpadEqual: 'Equal' });
+  // The popped-up label names the key pressed, not the cap it went to.
+  const LABEL = {
+    Backquote: '`', Delete: '⌦', Home: '↖', End: '↘', PageUp: '⇞', PageDown: '⇟', Insert: 'ins', Help: 'ins',
+    Fn: 'fn', ControlRight: '⌃', AltRight: '⌥', NumpadAdd: '+', NumpadSubtract: '-', NumpadMultiply: '*', NumpadDivide: '/',
+  };
 
   // Keys the user types with the left hand; the cat presses them with the paw on screen right.
   const LEFT_HAND = new Set(['Escape', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Tab', 'KeyQ', 'KeyW', 'KeyE',
@@ -61,10 +69,21 @@
   const plate = slab(W - 0.05, D - 0.05, 0.01, 0.05, '#2b2b28', H);
   board.add(caseMesh, plate);
 
-  // A keycap is a 4-sided frustum turned 45°, scaled to the key width: sloped sides, flat top.
-  const capGeo = new THREE.CylinderGeometry(Math.SQRT1_2 * 0.8, Math.SQRT1_2, 1, 4, 1);
-  capGeo.rotateY(Math.PI / 4);
-  capGeo.translate(0, 0.5, 0);
+  // A keycap is a 4-sided frustum turned 45°: sloped sides, flat top. A wide key stretches the
+  // middle and keeps the slopes of a 1u cap, so it reads as a long bar rather than a wedge.
+  // `w` is the width in 1u caps.
+  const capGeos = new Map();
+  function capGeo(w) {
+    if (!capGeos.has(w)) {
+      const g = new THREE.CylinderGeometry(Math.SQRT1_2 * 0.8, Math.SQRT1_2, 1, 4, 1);
+      g.rotateY(Math.PI / 4);
+      g.translate(0, 0.5, 0);
+      const p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setX(i, p.getX(i) + Math.sign(p.getX(i)) * (w - 1) / 2);
+      capGeos.set(w, g);
+    }
+    return capGeos.get(w);
+  }
   const sideMat = K.flat('#e6e3d8'), modSide = K.flat('#cbc7ba'), orangeSide = K.flat('#d39a4e');
   // A short dark notch at the near edge of each cap, like the gap between rows seen from above.
   const dotGeo = new THREE.PlaneGeometry(0.014, 0.02);
@@ -91,8 +110,8 @@
       const x = (7.5 - cx) * U, z = (r - 2) * -U;
       const top = new THREE.MeshBasicMaterial({ color: COLORS[kind].clone() });
       const side = kind === 'mod' ? modSide : kind === 'orange' ? orangeSide : sideMat;
-      const cap = new THREE.Mesh(capGeo, [side, top, K.flat('#1f1f1d')]);
-      cap.scale.set(width * U - (U - CAP), CAP_H, CAP);
+      const cap = new THREE.Mesh(capGeo((width * U - (U - CAP)) / CAP), [side, top, K.flat('#1f1f1d')]);
+      cap.scale.set(CAP, CAP_H, CAP);
       const holder = new THREE.Group();
       holder.position.set(x, H + 0.01, z);
       const dot = new THREE.Mesh(dotGeo, dotMat);
@@ -139,6 +158,7 @@
     },
     resolve(code) { return keys.get(code) || keys.get(ALIAS[code]) || null; },
     leftHand: code => LEFT_HAND.has(ALIAS[code] || code),
+    label(code) { return LABEL[code] || (/^F\d+$/.test(code) ? code : this.resolve(code).label); },
     // World-space top centre of a key, including how far it is pushed in.
     keyTop(key, out = world) {
       board.updateMatrixWorld();

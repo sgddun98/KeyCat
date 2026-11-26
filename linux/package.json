@@ -1,0 +1,79 @@
+{
+  "name": "keycat",
+  "productName": "KeyCat",
+  "version": "1.1.3",
+  "description": "一只趴在键盘上的桌面猫",
+  "homepage": "https://ellobodk.github.io/KeyCat/",
+  "license": "GPL-3.0-only",
+  "author": "ElloboDK <ElloboDK@users.noreply.github.com>",
+  "private": true,
+  "main": "src/main.js",
+  "desktopName": "keycat.desktop",
+  "scripts": {
+    "start": "electron .",
+    "input": "cargo build --release --manifest-path input/Cargo.toml",
+    "dist": "cargo build --release --target x86_64-unknown-linux-musl --manifest-path input/Cargo.toml && electron-builder --linux --x64 --publish never",
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.65.1"
+  },
+  "build": {
+    "appId": "com.ellobok.keycat",
+    "executableName": "keycat",
+    "artifactName": "KeyCat-Linux.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**",
+      "icons/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web",
+        "to": "web",
+        "filter": [
+          "*.html",
+          "*.js",
+          "THREE_LICENSE"
+        ]
+      },
+      {
+        "from": "input/target/x86_64-unknown-linux-musl/release/keycat-input",
+        "to": "keycat-input"
+      }
+    ],
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/ElloboDK/KeyCat/releases/latest/download"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icons/icon.png",
+      "category": "Utility",
+      "synopsis": "一只趴在键盘上的桌面猫",
+      "desktop": {
+        "entry": {
+          "Name": "KeyCat",
+          "Comment": "一只趴在键盘上的桌面猫"
+        }
+      }
+    },
+    "deb": {
+      "packageName": "keycat"
+    }
+  }
+}

@@ -1,19 +1,22 @@
 name: Build
 
-# Builds both apps and publishes releases, so nothing depends on one person's machine.
+# Builds the apps and publishes releases, so nothing depends on one person's machine.
 #
-# - Pull requests build what they touch (mac/ → macOS, win/ → Windows, web/ → both), unsigned,
-#   as a check. Actions minutes on macOS cost the most, hence the path test instead of building
-#   everything every time.
-# - Manual runs build both. On main they are signed with the release identities, without
+# - Pull requests build what they touch (mac/ → macOS, win/ → Windows, linux/ → Linux, web/ →
+#   all three), unsigned, as a check. Actions minutes on macOS cost the most, hence the path
+#   test instead of building everything every time.
+# - Manual runs build all three. On main they are signed with the release identities, without
 #   publishing: a dry run of a release whose artifacts can be downloaded from the run. On any
 #   other branch they are unsigned checks.
 # - A vX.Y.Z tag builds each platform whose version is X.Y.Z (mac/Info.plist
-#   CFBundleShortVersionString, win/package.json version), signed, and in ElloboDK/KeyCat,
-#   where installed copies download updates from, publishes one release. A platform at another
-#   version keeps its files from the previous release, so a Windows-only fix still leaves the
-#   mac download and update manifest in place. In any other repo, tags build but publish
-#   nothing.
+#   CFBundleShortVersionString, win/package.json and linux/package.json version), signed, and
+#   in ElloboDK/KeyCat, where installed copies download updates from, publishes one release. A
+#   platform at another version keeps its files from the previous release, so a Windows-only
+#   fix still leaves the mac download and update manifest in place. In any other repo, tags
+#   build but publish nothing.
+#
+# The Linux packages carry no signature of their own: the updater checks the sha512 in
+# latest-linux.yml, which comes from the same release over HTTPS.
 #
 # Signed jobs run in the release environment, whose secrets hold the signing identities and
 # which only main and v* tags may use. Pull requests from forks never get secrets.
@@ -34,6 +37,7 @@ jobs:
     outputs:
       mac: ${{ steps.plan.outputs.mac }}
       windows: ${{ steps.plan.outputs.windows }}
+      linux: ${{ steps.plan.outputs.linux }}
       signed: ${{ steps.plan.outputs.signed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -46,15 +50,17 @@ jobs:
         run: |
           mac_version="$(python3 -c 'import plistlib; print(plistlib.load(open("mac/Info.plist", "rb"))["CFBundleShortVersionString"])')"
           win_version="$(jq -r .version win/package.json)"
-          echo "mac $mac_version, windows $win_version"
+          linux_version="$(jq -r .version linux/package.json)"
+          echo "mac $mac_version, windows $win_version, linux $linux_version"
           case "$GITHUB_EVENT_NAME" in
             push)
               version="${GITHUB_REF_NAME#v}"
-              mac=false; windows=false
+              mac=false; windows=false; linux=false
               [ "$mac_version" = "$version" ] && mac=true
               [ "$win_version" = "$version" ] && windows=true
-              if [ $mac = false ] && [ $windows = false ]; then
-                echo "tag $GITHUB_REF_NAME matches neither mac/Info.plist ($mac_version) nor win/package.json ($win_version)" >&2
+              [ "$linux_version" = "$version" ] && linux=true
+              if [ $mac = false ] && [ $windows = false ] && [ $linux = false ]; then
+                echo "tag $GITHUB_REF_NAME matches none of mac/Info.plist ($mac_version), win/package.json ($win_version) and linux/package.json ($linux_version)" >&2
                 exit 1
               fi
               signed=true ;;
@@ -62,13 +68,14 @@ jobs:
               changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --paginate --jq '.files[].filename')"
               grep -qE '^(mac|web)/|^\.github/workflows/build\.yml$' <<<"$changed" && mac=true || mac=false
               grep -qE '^(win|web)/|^\.github/workflows/build\.yml$' <<<"$changed" && windows=true || windows=false
+              grep -qE '^(linux|web)/|^\.github/workflows/build\.yml$' <<<"$changed" && linux=true || linux=false
               signed=false ;;
             *)
-              mac=true; windows=true
+              mac=true; windows=true; linux=true
               [ "$GITHUB_REF" = refs/heads/main ] && signed=true || signed=false ;;
           esac
-          echo "mac=$mac windows=$windows signed=$signed"
-          { echo "mac=$mac"; echo "windows=$windows"; echo "signed=$signed"; } >> "$GITHUB_OUTPUT"
+          echo "mac=$mac windows=$windows linux=$linux signed=$signed"
+          { echo "mac=$mac"; echo "windows=$windows"; echo "linux=$linux"; echo "signed=$signed"; } >> "$GITHUB_OUTPUT"
 
   mac:
     needs: plan
@@ -211,9 +218,65 @@ jobs:
           path: win/out/*
           if-no-files-found: error
 
+  # Nothing to sign, so no release environment. The checks run the packaged app, extracted from
+  # the AppImage, under Xvfb, and xdotool types and clicks for real through the input helper.
+  linux:
+    needs: plan
+    if: needs.plan.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: linux/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: linux/input
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools xvfb xdotool
+
+      - name: Test the input helper
+        run: cargo test --manifest-path input/Cargo.toml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run dist
+
+      - name: Check the packaged app
+        run: |
+          ./dist/KeyCat-Linux.AppImage --appimage-extract >/dev/null
+          KEYCAT_APP="$PWD/squashfs-root/keycat" xvfb-run -a -s '-screen 0 1280x800x24' node check.js
+          dpkg-deb --info dist/KeyCat-Linux.deb
+          dpkg-deb --contents dist/KeyCat-Linux.deb | grep -q './opt/KeyCat/resources/keycat-input$'
+          cat dist/latest-linux.yml
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: keycat-linux
+          path: |
+            linux/dist/KeyCat-Linux.AppImage
+            linux/dist/KeyCat-Linux.deb
+            linux/dist/latest-linux.yml
+          if-no-files-found: error
+
   publish:
-    needs: [plan, mac, windows]
-    # Runs when the platforms the tag needs have built; the other one is skipped, not failed.
+    needs: [plan, mac, windows, linux]
+    # Runs when the platforms the tag needs have built; the others are skipped, not failed.
     if: github.repository == 'ElloboDK/KeyCat' && startsWith(github.ref, 'refs/tags/v') && !failure() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
@@ -234,10 +297,17 @@ jobs:
           name: keycat-windows
           path: out
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.plan.outputs.linux == 'true'
+        with:
+          name: keycat-linux
+          path: out
+
       - name: Publish release
         env:
           MAC: ${{ needs.plan.outputs.mac }}
           WINDOWS: ${{ needs.plan.outputs.windows }}
+          LINUX: ${{ needs.plan.outputs.linux }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             # A re-run: replace what this run built, keep the rest.
@@ -246,7 +316,7 @@ jobs:
           fi
           previous="$(gh release view --json tagName --jq .tagName)"
           echo "previous release $previous"
-          # The platform this tag does not build keeps its files from the previous release; its
+          # A platform this tag does not build keeps its files from the previous release; its
           # update manifest still points at that release's download, which stays where it is.
           if [ "$MAC" != true ]; then
             gh release download "$previous" -D out \
@@ -255,6 +325,11 @@ jobs:
           if [ "$WINDOWS" != true ]; then
             gh release download "$previous" -D out \
               -p KeyCat-Windows-Setup.exe -p latest.json -p latest.yml
+          fi
+          # Linux's first release has no previous files to keep.
+          if [ "$LINUX" != true ]; then
+            gh release download "$previous" -D out \
+              -p KeyCat-Linux.AppImage -p KeyCat-Linux.deb -p latest-linux.yml || true
           fi
           ls -l out
           # Notes list the pull requests merged since the previous release.

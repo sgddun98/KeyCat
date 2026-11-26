@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KeyCat 键盘猫</title>
-<meta name="description" content="一只趴在键盘上的桌面猫：你打字它伸爪按键，动鼠标它扭头看。免费，支持 macOS 和 Windows。">
+<meta name="description" content="一只趴在键盘上的桌面猫：你打字它伸爪按键，动鼠标它扭头看。免费，支持 macOS、Windows 和 Linux。">
 <meta property="og:title" content="KeyCat 键盘猫">
 <meta property="og:description" content="一只趴在键盘上的桌面猫：你打字它伸爪按键，动鼠标它扭头看。">
 <meta property="og:image" content="keycat.gif">
@@ -134,7 +134,7 @@
   .feature h3 { margin: 8px 0 6px; font-size: 17px; }
   .feature p { margin: 0; color: var(--ink-2); font-size: 15px; }
 
-  .install { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .install { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
   .os { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
   .os.mine { border-color: var(--ink); }
   .os h3 { margin: 0 0 4px; font-size: 18px; display: flex; align-items: center; gap: 8px; }
@@ -188,7 +188,7 @@
         <div class="cta">
           <a class="btn" id="dl" href="https://github.com/ElloboDK/KeyCat/releases/latest">
             <svg id="dl-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
-            <span><b id="dl-label">免费下载</b><small id="dl-sub">macOS 13+ · Windows 10+</small></span>
+            <span><b id="dl-label">免费下载</b><small id="dl-sub">macOS 13+ · Windows 10+ · Linux</small></span>
           </a>
           <span class="alt" id="dl-alt"><a href="#install">其他系统和安装说明</a></span>
         </div>
@@ -244,13 +244,25 @@
           </ol>
           <a class="dl" href="https://github.com/ElloboDK/KeyCat/releases/latest/download/KeyCat-Windows-Setup.exe">下载 KeyCat-Windows-Setup.exe</a>
         </div>
+        <div class="os" id="os-linux">
+          <h3>Linux <span class="tag" hidden>你的系统</span></h3>
+          <div class="req">64 位，Ubuntu 22.04 及以上等发行版，需要 X11（Xorg）桌面</div>
+          <ol>
+            <li><b>Ubuntu / Debian：</b>打开终端，粘贴这行命令回车（会要你输入密码），装好后在应用列表里打开 KeyCat：
+              <div class="cmd"><pre id="linux-cmd">curl -L -o /tmp/KeyCat-Linux.deb https://github.com/ElloboDK/KeyCat/releases/latest/download/KeyCat-Linux.deb &amp;&amp; sudo apt install -y /tmp/KeyCat-Linux.deb</pre><button class="copy" data-copy="linux-cmd">复制</button></div>
+            </li>
+            <li><b>其他发行版：</b>下载 <a href="https://github.com/ElloboDK/KeyCat/releases/latest/download/KeyCat-Linux.AppImage"><code>KeyCat-Linux.AppImage</code></a>，执行 <code>chmod +x KeyCat-Linux.AppImage</code> 后双击运行。</li>
+            <li>Wayland 下收不到其他程序的按键：在登录界面点右下角齿轮，选「Ubuntu on Xorg」。GNOME 要装 AppIndicator 扩展才有托盘图标，右键猫也能打开菜单。</li>
+          </ol>
+          <a class="dl" href="https://github.com/ElloboDK/KeyCat/releases/latest/download/KeyCat-Linux.deb">下载 KeyCat-Linux.deb</a>
+        </div>
       </div>
     </section>
   </main>
 
   <footer>
-    <p>两个平台都会自动更新，装一次就好。历史版本见 <a href="https://github.com/ElloboDK/KeyCat/releases">Releases</a>。</p>
-    <p>KeyCat 是个人学习项目，仅供个人使用和交流，不用于商业分发。</p>
+    <p>三个平台都会自动更新，装一次就好。历史版本见 <a href="https://github.com/ElloboDK/KeyCat/releases">Releases</a>。</p>
+    <p>KeyCat 由 ElloboDK 个人开发，按 <a href="https://github.com/ElloboDK/KeyCat/blob/main/LICENSE">GPL-3.0</a> 开源。</p>
   </footer>
 </div>
 
@@ -268,29 +280,37 @@
     if (/Android|iPhone|iPad|iPod/i.test(ua) || (/Mac/.test(platform) && navigator.maxTouchPoints > 1)) return 'mobile';
     if (/Win/i.test(platform) || /Windows/.test(ua)) return 'win';
     if (/Mac/i.test(platform) || /Mac OS X/.test(ua)) return 'mac';
+    if (/Linux/i.test(platform) || /Linux/.test(ua)) return 'linux';
     return 'other';
   }
   const APPLE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.2 1.8-3.26 1.88-3.31-1.03-1.5-2.62-1.7-3.18-1.73-1.35-.14-2.64.8-3.33.8-.69 0-1.74-.78-2.87-.76-1.47.02-2.83.86-3.59 2.18-1.53 2.66-.39 6.6 1.1 8.75.73 1.05 1.6 2.24 2.73 2.2 1.1-.05 1.51-.71 2.84-.71 1.32 0 1.7.71 2.86.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.3-.88-2.3-3.52zM14.2 6.13c.6-.73 1.01-1.75.9-2.76-.87.04-1.92.58-2.54 1.31-.56.64-1.05 1.67-.92 2.66.97.08 1.96-.49 2.56-1.21z"/></svg>';
   const WINDOWS = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.1l7.4-1v7.1H3V5.1zm0 13.8l7.4 1v-7H3v6zm8.3 1.1L21 21.3v-8.4h-9.7v7.1zm0-15.9v7.2H21V2.7l-9.7 1.4z"/></svg>';
 
+  // For each system: its installer, button text, icon, and the other installers offered beside it.
+  const OFFERS = {
+    mac: { file: 'KeyCat-macOS.zip', label: '下载 macOS 版', sub: 'macOS 13+ · Intel / Apple 芯片', ico: APPLE, alt: '<a href="#install">终端一键安装</a> · ' },
+    win: { file: 'KeyCat-Windows-Setup.exe', label: '下载 Windows 版', sub: 'Windows 10 / 11 · 64 位', ico: WINDOWS, alt: '' },
+    linux: { file: 'KeyCat-Linux.deb', label: '下载 Linux 版', sub: 'Ubuntu / Debian · 64 位 · X11', ico: null, alt: '<a href="#install">终端一键安装</a> · <a href="' + LATEST + 'KeyCat-Linux.AppImage">AppImage</a> · ' },
+  };
+  const NAMES = { mac: 'macOS 版', win: 'Windows 版' };
+
   const os = detectOS();
-  if (os === 'mac' || os === 'win') {
-    const mac = os === 'mac';
-    $('dl').href = LATEST + (mac ? 'KeyCat-macOS.zip' : 'KeyCat-Windows-Setup.exe');
-    $('dl-ico').outerHTML = mac ? APPLE : WINDOWS;
-    $('dl-label').textContent = mac ? '下载 macOS 版' : '下载 Windows 版';
-    $('dl-sub').textContent = mac ? 'macOS 13+ · Intel / Apple 芯片' : 'Windows 10 / 11 · 64 位';
-    const other = mac ? ['Windows 版', 'KeyCat-Windows-Setup.exe'] : ['macOS 版', 'KeyCat-macOS.zip'];
-    $('dl-alt').innerHTML = (mac ? '<a href="#install">终端一键安装</a> · ' : '')
-      + `也有 <a href="${LATEST + other[1]}">${other[0]}</a>`;
-    const card = $(mac ? 'os-mac' : 'os-win');
+  const offer = OFFERS[os];
+  if (offer) {
+    $('dl').href = LATEST + offer.file;
+    if (offer.ico) $('dl-ico').outerHTML = offer.ico;
+    $('dl-label').textContent = offer.label;
+    $('dl-sub').textContent = offer.sub;
+    const others = Object.keys(NAMES).filter(k => k !== os).map(k => `<a href="${LATEST + OFFERS[k].file}">${NAMES[k]}</a>`);
+    $('dl-alt').innerHTML = offer.alt + `也有 ${others.join('、')}`;
+    const card = $('os-' + os);
     card.classList.add('mine');
     card.querySelector('.tag').hidden = false;
-    if (!mac) card.parentNode.prepend(card);
+    card.parentNode.prepend(card);
   } else {
     $('dl').href = '#install';
     $('dl-label').textContent = os === 'mobile' ? '在电脑上安装' : '选择安装包';
-    $('dl-sub').textContent = os === 'mobile' ? 'KeyCat 是 Mac / Windows 桌面应用' : '目前支持 macOS 和 Windows';
+    $('dl-sub').textContent = os === 'mobile' ? 'KeyCat 是 Mac / Windows / Linux 桌面应用' : '支持 macOS、Windows 和 Linux';
   }
 
   for (const b of document.querySelectorAll('.copy')) {
@@ -306,7 +326,7 @@
     });
   }
 
-  // Downloads: every macOS zip and Windows installer across all releases. stats.json is written
+  // Downloads: every macOS zip and Windows and Linux installer across all releases. stats.json is written
   // when the site deploys (and every few hours after), so the number shows even when the GitHub
   // API turns a visitor away: without a token it allows 60 requests an hour per IP, which a
   // shared office or carrier address runs through quickly. The live count then replaces it.
@@ -341,7 +361,7 @@
     if (!res.ok) throw new Error(res.status);
     const releases = (await res.json()).filter(r => !r.draft && !r.prerelease);
     let downloads = 0;
-    for (const r of releases) for (const a of r.assets) if (/\.(zip|exe)$/i.test(a.name)) downloads += a.download_count;
+    for (const r of releases) for (const a of r.assets) if (/\.(zip|exe|AppImage|deb)$/i.test(a.name)) downloads += a.download_count;
     const s = { at: Date.now(), downloads, version: releases[0] && releases[0].tag_name, published: releases[0] && releases[0].published_at };
     try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* storage unavailable */ }
     return s;

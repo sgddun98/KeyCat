@@ -23,3 +23,8 @@ tools/site/node_modules/
 
 # Local git worktrees
 .worktrees/
+
+# Linux build (Electron + XInput2 helper)
+linux/node_modules/
+linux/dist/
+linux/input/target/

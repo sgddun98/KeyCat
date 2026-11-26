@@ -1,0 +1,18 @@
+[package]
+name = "keycat-input"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+description = "Global key and button watcher for the KeyCat Linux host (X11 XInput2 raw events)"
+
+[dependencies]
+# Pure Rust X11 client: no libX11 to link, so the release build is one static musl binary.
+x11rb = { version = "0.13", default-features = false, features = ["xinput"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

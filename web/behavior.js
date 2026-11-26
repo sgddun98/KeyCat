@@ -42,6 +42,8 @@
     lieAt: 'board', sleepPose: 'loaf', cuddleUntil: 0,
     // Purring when petted (or, once you are close, when the pointer rests by its head).
     purr: 0, breath: 0, nextHeart: 0, rubCursor: false, lastPetDown: -100, blinkAskAt: 0,
+    // Breathing phases (radians), sitting and lying.
+    breathSit: 0, breathLie: 0,
     // Keyboard shortcuts it recognises.
     mods: new Set(), backs: [], lastOops: -100, clip: null,
     // Wall-clock bookkeeping (Date.now(), ms) for breaks, greetings and the memory.
@@ -426,7 +428,7 @@
       k.down = true;
       S.lastKey = t;
       S.strokes.push(t);
-      if (!opts.privacy) popup(k, t, 1);
+      if (!opts.privacy) popup(k, t, 1, keyboard.label(code));
       // 阻止打字: with the keyboard taken, typing gets a paw held up at you and a wink.
       if (S.lying && S.lieAt === 'board' && P.lie.x > 0.6) {
         if (!stopping(t)) {
@@ -453,9 +455,8 @@
     S.strokes.push(t);
     // Mashing the keyboard (four or more keys inside 150 ms) is upsetting.
     if (S.strokes.filter(s => t - s < 0.15).length >= TUNING.mashKeys) poke(0.3, t);
-    // F keys have no caps of their own and press the digit below; the label still names the F key.
-    if (!opts.privacy) popup(k, t, paw.side, /^F\d+$/.test(code) ? code : k.label);
-    shortcut(k.code, code, t);
+    if (!opts.privacy) popup(k, t, paw.side, keyboard.label(code));
+    shortcut(k.code, code, t, paw);
   }
 
   function tailPat(k, t, held) {
@@ -1472,9 +1473,10 @@
     P.hunch.step(hunch, dt);
     P.squash.step(squash, dt);
     P.flinch.step(0, dt);
-    // Advance the phase by this frame only, so changing the rate keeps the breath continuous.
-    S.breathPhase += dt * mix(2.1, 1.1, S.sleep);
-    const breathe = Math.sin(S.breathPhase) * mix(0.012, 0.02, S.sleep);
+    // Breathing slows as it falls asleep. The phase is summed frame by frame: `t` times a changing
+    // rate would jump by `t` times the change, so the longer it had run the harder it shook.
+    S.breathSit += dt * mix(2.1, 1.1, S.sleep);
+    const breathe = Math.sin(S.breathSit) * mix(0.012, 0.02, S.sleep);
     cat.bend.x = P.shift.x;
     cat.bend.z = P.hunch.x;
     cat.bend.squash = P.squash.x - 0.1 * P.flinch.x;
@@ -1511,8 +1513,8 @@
     }
     shapeLying(st, L.lead, cat.body.position);
     // Lying, each breath lifts the back and the flank: slow and deep asleep.
-    S.lieBreathPhase += dt * mix(3.2, 2.3, S.sleep);
-    const lieBreath = Math.sin(S.lieBreathPhase) * mix(0.02, 0.035, S.sleep);
+    S.breathLie += dt * mix(3.2, 2.3, S.sleep);
+    const lieBreath = Math.sin(S.breathLie) * mix(0.02, 0.035, S.sleep);
     for (const k of [0, 1]) { cat.lying.kF[k] *= 1 + lieBreath; cat.lying.kS[k] *= 1 + lieBreath * 0.4; }
     // A slight sideways lean of the whole body sells the weight shift; most of it is in the
     // spine. No twist about the vertical: the round body would not show it, but the bib, collar

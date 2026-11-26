@@ -173,7 +173,7 @@ impl Host {
             gloves: text("gloves", "auto"),
             blush: self.store.get("blush") == Some(&Value::Bool(true)),
             whiskers: self.store.get("whiskers") != Some(&Value::Bool(false)),
-            soft_points: self.store.get("softPoints") == Some(&Value::Bool(true)),
+            soft_points: self.store.get("softPoints") != Some(&Value::Bool(false)),
             mouse_cable: self.store.get("mouseCable") != Some(&Value::Bool(false)),
             keyboard_color: text("keyboardColor", "cream"),
             opacity: number("opacity").filter(|v| (0.3..=1.0).contains(v)).unwrap_or(1.0),

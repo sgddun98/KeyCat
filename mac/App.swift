@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     /// Colourpoint coats fade into their points, as in 1.0.4, instead of a crisp edge.
     var softPoints: Bool {
-        get { defaults.bool(forKey: "softPoints") }
+        get { defaults.object(forKey: "softPoints") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "softPoints") }
     }
     var gloves: String {
