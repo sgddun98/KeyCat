@@ -3,6 +3,7 @@
 'use strict';
 (() => {
   const { V, mix, smooth } = K;
+  let dog = null;
   // One fur material per part, sharing the coat (see fur.js); each knows where its markings go.
   const fur = {
     head: K.furMaterial('HEAD'), body: K.furMaterial('BODY'), tail: K.furMaterial('TAIL'),
@@ -115,8 +116,8 @@
       sp.S.set(1, 0, 0).applyQuaternion(sp.q);
       sp.T.set(0, 1, 0).applyQuaternion(sp.q);
       sp.F.set(0, 0, 1).applyQuaternion(sp.q);
-      sp.kS = mix(1, mix(L.kS[0], L.kS[1], u), w);
-      sp.kF = mix(1, mix(L.kF[0], L.kF[1], u), w);
+      sp.kS = mix(dog?.bodyWidth ?? 1, mix(L.kS[0], L.kS[1], u), w);
+      sp.kF = mix(dog?.bodyDepth ?? 1, mix(L.kF[0], L.kF[1], u), w);
     }
     // Walk the spine out from the seat both ways. Sitting, it is straight up; lying, it walks the
     // path. The bend and squash of the sitting pose are added on top, fading out as it lies down.
@@ -148,14 +149,24 @@
       .addScaledVector(tF.lerpVectors(a.F, b.F, f), z * kF);
   }
   const restPos = [bodyGeo, rimGeo].map(g => Float32Array.from(g.attributes.position.array));
+  // The Samoyed's neck coat widens the upper chest on the same mesh that bends when it lies down.
+  const ruffWeights = new Float32Array(restPos[0].length / 3);
+  for (let i = 0; i < ruffWeights.length; i++) {
+    const [x, y, z] = restPos[0].subarray(3 * i, 3 * i + 3);
+    const upperChest = smooth(0.58, 1.16, y);
+    const shoulderFur = Math.sin(33 * y + 3 * Math.atan2(Math.abs(x), z));
+    ruffWeights[i] = upperChest * (0.94 + 0.07 * shoulderFur);
+  }
   const spread = V(0, 0, 0);
   function bendBody() {
     buildSpine();
     const fl = lying.amount > 0.001 && lying.floor, bp = body.position;
+    const neckRuff = dog?.neckRuff ?? 0;
     [[bodyGeo, bodyMesh], [rimGeo, bodyRim]].forEach(([g, mesh], gi) => {
       const src = restPos[gi], pos = g.attributes.position.array, sc = mesh.userData.size, v = tA;
       for (let i = 0; i < pos.length; i += 3) {
-        const x = src[i] * sc.x, y = src[i + 1] * sc.y, z = src[i + 2] * sc.z;
+        const ruff = neckRuff * ruffWeights[i / 3];
+        const x = src[i] * sc.x * (1 + ruff), y = src[i + 1] * sc.y, z = src[i + 2] * sc.z * (1 + 0.72 * ruff);
         // Lying, the flat seat would show as a flat end: it rounds off into a rump.
         const r = Math.hypot(x, z / 0.82), w0 = spine[Math.round(-S0 / DS)].w;
         const sv = y - w0 * 0.26 * Math.sqrt(Math.max(0, 1 - (r / 0.66) ** 2)) * (1 - smooth(0.05, 0.4, y));
@@ -463,7 +474,7 @@
         paw.quaternion.slerp(pawBasis(pose.toes || legFlat, legQ, pose.top || Y_UP), w);
       }
       mid.lerpVectors(knee, paw.position, 0.5);
-      paw.scale.set(0.17, 0.1, 0.15);
+      paw.scale.set(0.17 * (dog?.pawWidth ?? 1), 0.1, 0.15);
       // Turn the exposed pad pattern to match the forepaws while keeping the leg extended.
       shapePaw(paw, clench, padDirection);
       paw.userData.rim.scale.copy(paw.scale).addScalar(0.016);
@@ -554,6 +565,11 @@
     p.setXYZ(i, p.getX(i) * cheek, y > 0 ? y * (1 - 0.06 * y) : y * 0.96, p.getZ(i));
   }
   headGeo.computeVertexNormals();
+  const dogHeadGeos = {
+    rounded: K.dogHeadGeometry('rounded'),
+    flowing: K.dogHeadGeometry('flowing'),
+    collie: K.dogHeadGeometry('collie'),
+  };
   const headMesh = new THREE.Mesh(headGeo, fur.head);
   headMesh.scale.copy(R);
   headMesh.renderOrder = 0.6;   // after the ear outlines, see `ears`
@@ -586,6 +602,11 @@
   const EAR_AT = V(0.26, 0.21, -0.06), EAR_STRETCH = 1.12;
   const earTilt = k => 0.2 + 0.5 * Math.max(0, k - 1);
   const earTop = [[0.225, 0.1], [0.185, 0.19], [0.135, 0.27], [0.08, 0.33], [0.035, 0.36], [0, 0.37]];
+  const roundedEarTop = [[0.225, 0.1], [0.198, 0.19], [0.161, 0.27], [0.116, 0.329], [0.061, 0.365], [0, 0.382]];
+  const pointedEarTop = [[0.225, 0.1], [0.171, 0.215], [0.112, 0.331],
+    [0.061, 0.411], [0.025, 0.451], [0, 0.458]];
+  const roundTipEarTop = [[0.225, 0.1], [0.199, 0.187], [0.157, 0.276],
+    [0.111, 0.351], [0.072, 0.401], [0.04, 0.419], [0.017, 0.427], [0, 0.429]];
   // The head's outer outline (see headGeo, `grow` for its rim) in the right ear's own frame, as
   // radius for height.
   const headInEar = (k, grow) => {
@@ -609,10 +630,10 @@
   // The profile, bottom to top, for the ear (`grow` 0) or its outline: the outer edge carried on
   // straight down from the ear, merged with the head's outline in a rounded fillet, then drawn
   // in away from it, down to a rounded-off bottom. `meet` is just below where the edge reaches the head.
-  const earProfile = (k, grow) => {
+  const earProfile = (k, grow, profile) => {
     const big = ([r, y]) => [r * (1 + (k - 1) * smooth(-0.06, 0.2, y)), -0.06 + (y + 0.06) * (1 + 0.6 * (k - 1))];
-    const n = earTop.length - 1;
-    const top = earTop.map(big).map(([r, y], i) => [r && r + grow, y + grow * (i / n) ** 2]);
+    const n = profile.length - 1;
+    const top = profile.map(big).map(([r, y], i) => [r && r + grow, y + grow * (i / n) ** 2]);
     const head = headInEar(k, grow && 0.024);
     const [[ra, ya], [rb, yb]] = top, edge = y => ra + (rb - ra) * (y - ya) / (yb - ya);
     // Just inside the head where the two meet, then well inside it further down, so the base
@@ -641,33 +662,114 @@
     for (let i = 0; i < pos.count; i++) pos.setZ(i, pos.getZ(i) * mix(1, 0.3, smooth(join, join - 0.1, pos.getY(i))));
     return g;
   };
-  const earGeos = {};
-  const earGeo = k => earGeos[k] || (earGeos[k] = (() => {
+  const earGeos = new Map();
+  const earGeo = (k, profile, sweep = 0, fold = 0) => {
+    if (!earGeos.has(profile)) earGeos.set(profile, new Map());
+    const variants = earGeos.get(profile);
+    const key = `${k}-${fold}-${sweep}`;
+    if (variants.has(key)) return variants.get(key);
     const geos = [0, 0.026].map(grow => {
-      const g = earLathe(earProfile(k, grow));
-      g.setAttribute('rest', earLathe(earProfile(1, grow)).attributes.position);
+      const g = earLathe(earProfile(k, grow, profile));
+      g.setAttribute('rest', earLathe(earProfile(1, grow, profile)).attributes.position);
+      if (sweep || fold) {
+        const pos = g.attributes.position, height = 1 + 0.6 * (k - 1);
+        const bendAt = -0.06 + 0.34 * height, radius = 0.025 * height;
+        const maxAngle = 2.87 * fold;
+        for (let i = 0; i < pos.count; i++) {
+          const y = pos.getY(i);
+          const x = pos.getX(i) + sweep * smooth(0.11, 0.40, y);
+          const z = pos.getZ(i) * mix(1, 0.34, fold * smooth(bendAt - 0.08, bendAt, y));
+          if (y <= bendAt || !fold) {
+            pos.setXYZ(i, x, y, z);
+            continue;
+          }
+          // Round the crease near the tip, then continue the flap down in a straight line.
+          const length = y - bendAt;
+          const angle = Math.min(length / radius, maxAngle);
+          const straight = length - angle * radius;
+          const sin = Math.sin(angle), cos = Math.cos(angle);
+          const flap = fold * smooth(bendAt, bendAt + 0.12 * height, y);
+          pos.setXYZ(i, x + Math.sign(sweep) * 0.045 * flap,
+            bendAt + radius * sin + straight * cos - 0.5 * z * sin,
+            2 * (radius * (1 - cos) + straight * sin) + z * cos + 0.12 * flap);
+        }
+      }
       g.computeVertexNormals();
       return g;
     });
-    return { geos, meet: earProfile(k, 0).meet };
-  })());
+    const shape = { geos, meet: earProfile(k, 0, profile).meet };
+    variants.set(key, shape);
+    return shape;
+  };
+  function setEarFold(ear, blend) {
+    if (!ear.foldFrames || ear.fold === blend) return;
+    ear.fold = blend;
+    // Sample intermediate bends so the tip swings down without shortening across the hinge.
+    const step = blend * (ear.foldFrames.length - 1);
+    const index = Math.min(Math.floor(step), ear.foldFrames.length - 2);
+    const from = ear.foldFrames[index], to = ear.foldFrames[index + 1];
+    const amount = step - index;
+    [ear.mesh, ear.rim].forEach(({ geometry }, i) => {
+      for (const name of ['position', 'normal']) {
+        const attr = geometry.attributes[name], a = from[i].attributes[name].array, b = to[i].attributes[name].array;
+        for (let j = 0; j < a.length; j++) attr.array[j] = mix(a[j], b[j], amount);
+        attr.needsUpdate = true;
+      }
+      geometry.computeBoundingSphere();
+    });
+  }
   // Turns an ear: `z` leans it out, `x` tips it back. Leaning out, it turns about the middle of
   // its base, so the part under the cheek swings in. Standing up, about a point just below where
   // its outer edge meets the head, so the join moves in a touch rather than out; the base below
   // swings out a little, but sits far enough inside the head not to show.
   const earRest = new THREE.Euler(), earPivot = V(), earHeld = V();
   const turnEar = (ear, z, x) => {
+    if (ear.drop) {
+      const at = ear.drop.at, restZ = -ear.s * ear.tilt;
+      ear.group.position.set(ear.s * at.x, at.y, at.z);
+      ear.group.rotation.set(-0.10 - 0.40 * (x + 0.12), 0, mix(restZ, z, 0.45));
+      return;
+    }
     ear.group.rotation.set(x, 0, z);
     earPivot.copy(ear.meet).multiplyScalar(smooth(0, 0.1, ear.tilt + ear.s * z)).multiply(ear.group.scale);
     earHeld.copy(earPivot).applyEuler(earRest.set(-0.12, 0, -ear.s * ear.tilt));
-    ear.group.position.set(ear.s * EAR_AT.x, EAR_AT.y, EAR_AT.z).add(earHeld).sub(earPivot.applyEuler(ear.group.rotation));
+    ear.group.position.set(ear.s * (EAR_AT.x + (dog?.earSpread ?? 0)), EAR_AT.y, EAR_AT.z).add(earHeld).sub(earPivot.applyEuler(ear.group.rotation));
   };
   const placeEar = (ear, k) => {
-    const { geos: [geo, rimGeo], meet } = earGeo(k);
-    ear.mesh.geometry = geo;
-    ear.rim.geometry = rimGeo;
-    ear.tilt = earTilt(k);
-    ear.meet = V(ear.s * meet[0], meet[1], 0);
+    ear.drop = dog?.dropEar;
+    if (!dog?.earTipFold && ear.foldFrames) {
+      ear.mesh.geometry.dispose();
+      ear.rim.geometry.dispose();
+      ear.foldFrames = null;
+    }
+    if (ear.drop) {
+      if (!ear.dropGeos.has(ear.drop)) {
+        ear.dropGeos.set(ear.drop, [0, 0.018].map(grow => K.dropEarGeometry(ear.drop, ear.s, grow)));
+      }
+      [ear.mesh.geometry, ear.rim.geometry] = ear.dropGeos.get(ear.drop);
+      ear.group.scale.y = ear.mesh.scale.z = ear.rim.scale.z = 1;
+      ear.tilt = -0.075;
+    } else {
+      const pointing = dog?.pointedEars;
+      const profile = pointing === 'roundedTip' ? roundTipEarTop
+        : pointing ? pointedEarTop : dog?.roundedEars ? roundedEarTop : earTop;
+      const sweep = ear.s * (dog?.earSweep ?? 0);
+      const { geos, meet } = earGeo(k, profile, sweep);
+      if (dog?.earTipFold) {
+        if (!ear.foldFrames) {
+          ear.foldFrames = [geos, ...[0.25, 0.5, 0.75, 1].map(fold => earGeo(k, profile, sweep, fold).geos)];
+          [ear.mesh.geometry, ear.rim.geometry] = geos.map(geometry => geometry.clone());
+          ear.fold = 0;
+        }
+      } else {
+        [ear.mesh.geometry, ear.rim.geometry] = geos;
+      }
+      ear.group.scale.y = dog?.earHeight ?? EAR_STRETCH;
+      ear.mesh.scale.z = 0.5;
+      ear.rim.scale.z = 0.56;
+      ear.tilt = dog?.earTilt ?? earTilt(k);
+      ear.meet.set(ear.s * meet[0], meet[1], 0);
+    }
     turnEar(ear, -ear.s * ear.tilt, -0.12);
   };
   const ears = [-1, 1].map(s => {
@@ -685,7 +787,7 @@
     g.add(r, e);
     head.add(g);
     // `tilt`: how far the ear leans out at rest; the behaviour adds its swivel to it.
-    const ear = { group: g, mesh: e, rim: r, s, tilt: 0.2, meet: V() };
+    const ear = { group: g, mesh: e, rim: r, s, tilt: 0.2, meet: V(), dropGeos: new Map() };
     placeEar(ear, 1);
     return ear;
   });
@@ -693,14 +795,47 @@
   // Eyes sit on the face surface and face along its normal.
   const disc = new THREE.CircleGeometry(1, 36);
   const IRIS_HEIGHT = 0.14;
+  const LID_HALF_WIDTH = 0.12, LID_CURVE = 0.045;
+  const EYE_FRONT = V(0, 0, 1);
   const dizzyEyeMat = new THREE.MeshBasicMaterial({ map: K.fxTexture('dizzyEye'), depthTest: false, transparent: true });
+  // Clip the iris, pupil and catchlights to the same moving eyelid in eye-group coordinates.
+  function clipToLid(mesh, aperture) {
+    const material = mesh.material.clone();
+    material.color = mesh.material.color;
+    const eyeTransform = { value: new THREE.Matrix3() };
+    material.onBeforeCompile = shader => {
+      shader.uniforms.eyeAperture = aperture;
+      shader.uniforms.eyeTransform = eyeTransform;
+      shader.vertexShader = `uniform mat3 eyeTransform;\nvarying vec2 vEyePoint;\n${shader.vertexShader}`
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyePoint = (eyeTransform * vec3(position.xy, 1.0)).xy;');
+      shader.fragmentShader = `uniform vec2 eyeAperture;\nvarying vec2 vEyePoint;\n${shader.fragmentShader}`
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+          float closure = eyeAperture.x;
+          if (closure > 0.0) {
+            float x = abs(vEyePoint.x);
+            float seam = -${LID_CURVE} * cos(1.5707963 * min(x / ${LID_HALF_WIDTH}, 1.0));
+            float height = eyeAperture.y + 0.018;
+            float top = mix(height, seam, closure);
+            float bottom = mix(-height, seam, closure * closure);
+            float width = mix(0.18, ${LID_HALF_WIDTH}, smoothstep(0.54, 1.0, closure));
+            if (vEyePoint.y > top || vEyePoint.y < bottom || x > width) discard;
+          }`);
+    };
+    mesh.material = material;
+    mesh.onBeforeRender = () => {
+      const { scale, position } = mesh;
+      const c = Math.cos(mesh.rotation.z), s = Math.sin(mesh.rotation.z);
+      eyeTransform.value.set(c * scale.x, -s * scale.y, position.x,
+        s * scale.x, c * scale.y, position.y, 0, 0, 1);
+    };
+  }
   const eyes = [-1, 1].map(s => {
     const lx = s * 0.235, ly = 0.04;
     const lz = R.z * Math.sqrt(Math.max(0, 1 - (lx / R.x) ** 2 - (ly / R.y) ** 2));
     const g = new THREE.Group();
     g.position.set(lx, ly, lz + 0.005);
     const normal = V(lx / (R.x * R.x), ly / (R.y * R.y), lz / (R.z * R.z)).normalize();
-    g.quaternion.setFromUnitVectors(V(0, 0, 1), normal);
+    const rest = g.position.clone(), restTurn = g.quaternion.setFromUnitVectors(EYE_FRONT, normal).clone();
     const eyeMat = eyeMats[s < 0 ? 0 : 1];
     const iris = new THREE.Mesh(disc, eyeMat);
     iris.scale.set(0.155, IRIS_HEIGHT, 1);
@@ -717,6 +852,8 @@
       d.renderOrder = 12;
       shine.add(d);
     }
+    const aperture = { value: new THREE.Vector2(0, IRIS_HEIGHT) };
+    for (const layer of [iris, pupil, ...shine.children]) clipToLid(layer, aperture);
     const arc = new K.TaperTube(16, 6, lidMat, 11);
     arc.mesh.visible = false;
     const spiral = new THREE.Mesh(disc, dizzyEyeMat);
@@ -724,6 +861,7 @@
     spiral.position.z = 0.004;
     spiral.renderOrder = 12;
     spiral.visible = false;
+    clipToLid(spiral, aperture);
     g.add(iris, pupil, shine, arc.mesh, spiral);
     const blush = new THREE.Mesh(disc, blushMat);
     blush.scale.set(0.085, 0.048, 1);
@@ -731,7 +869,7 @@
     blush.renderOrder = 10;
     g.add(blush);
     head.add(g);
-    const eye = { s, group: g, iris, pupil, shine, arc: arc.mesh, spiral, lid: arc, lidK: 0 };
+    const eye = { s, group: g, rest, restTurn, coatTurn: restTurn.clone(), iris, pupil, shine, aperture, arc: arc.mesh, spiral, lid: arc, lidK: 0 };
     setLid(eye, 1);
     return eye;
   });
@@ -741,7 +879,7 @@
     if (Math.abs(eye.lidK - k) < 0.02) return;
     eye.lidK = k;
     const bold = smooth(0.2, -1, k);
-    eye.lid.update((t, out) => out.set(mix(-0.12, 0.12, t), -0.045 * k * Math.sin(t * Math.PI) + 0.0125 * (k - 1), 0.004),
+    eye.lid.update((t, out) => out.set(mix(-LID_HALF_WIDTH, LID_HALF_WIDTH, t), -LID_CURVE * k * Math.sin(t * Math.PI) + 0.0125 * (k - 1), 0.004),
       t => (0.011 + 0.004 * bold) + (0.006 + 0.004 * bold) * Math.sin(t * Math.PI));
   }
 
@@ -783,6 +921,7 @@
     face.add(noseMesh, mouth.mesh);
   }
   head.add(face);
+  const dogFace = K.makeDogFace(head);
 
   // A yawn: the mouth opens into a big dark oval under the nose with a pink tongue, wider than
   // tall at first and then stretching down towards the chin, the way a chibi yawn is drawn.
@@ -834,7 +973,7 @@
     lick.scale.set(1, 0.06 * Math.max(0.02, out), 1);
   }
   function setYawn(open) {
-    yawn.visible = open > 0.02;
+    yawn.visible = !dog && open > 0.02;
     yawn.scale.set(0.7 + 0.7 * open, Math.max(0.001, 1.8 * open), 1);
     // Opening wide, it grows downwards so the top stays clear of the nose.
     yawn.position.y = yawn.userData.y - 0.08 * open;
@@ -932,7 +1071,7 @@
   // only gives the shape it should take (`tailWant`). A bending wave runs out along it from the
   // root, and each link follows its place with a lag that grows towards the tip, so the tip
   // trails, overshoots and settles the way a real tail does.
-  const TAIL_N = 12, TAIL_LEN = 1.25, LINK = TAIL_LEN / TAIL_N;
+  const TAIL_N = 12, TAIL_LEN = 1.25;
   const tailWant = new THREE.CatmullRomCurve3(tailPts.map(q => q.clone()), false, 'catmullrom', 0.5);
   const tailCurve = new THREE.CatmullRomCurve3(Array.from({ length: TAIL_N + 1 }, () => V()), false, 'catmullrom', 0.5);
   const chain = tailCurve.points.map(() => V()), chainPrev = chain.map(() => V()), chainGoal = chain.map(() => V());
@@ -1078,7 +1217,7 @@
     // The paw points the way the forearm travels, and sits just past the end of the arm.
     const yaw = Math.atan2(b.x - c2.x, b.z - c2.z);
     arm.paw.position.copy(b);
-    arm.paw.scale.set(0.135, PAW_H, 0.13);
+    arm.paw.scale.set(0.135 * (dog?.pawWidth ?? 1), PAW_H, 0.13);
     arm.paw.rotation.set(0, yaw, 0);
     if (held > 0) arm.paw.quaternion.slerp(pawBasis(aim.toes, armQ, aim.top), held);
     if (w > 0) {
@@ -1134,13 +1273,14 @@
   // `reach` (0..1) blends in the space bar pat towards `reachTip`. `lie` (0..1) blends in the
   // lying pose, `wrap` (0..1) curls the tail round the front as when asleep (a cold winter cat).
   // `sway` is how lively the wave is, `dt` the frame time for the lag.
-  function updateTail(time, sway, sleep, thump = 0, lift = 0, lash = 0, reach = 0, reachTip = null, lie = 0, wrap = 0, dt = 1 / 60) {
+  function updateTail(time, sway, sleep, thump = 0, lift = 0, lash = 0, reach = 0, reachTip = null, lie = 0, wrap = 0, dt = 1 / 60, wag = 0) {
     body.updateMatrixWorld();
     const want = tailWant.points;
+    const rest = dog?.tail ?? tailPts, link = (dog?.tailLength ?? TAIL_LEN) / TAIL_N;
     const baseFollow = lying.tailWag === null ? mix(0.6, 1, lying.tailBaseFollow) : 1;
     for (let i = 0; i < tailPts.length; i++) {
       const w = i / (tailPts.length - 1);
-      const local = want[i].lerpVectors(tailPts[i], tailSleep[i], Math.max(sleep, wrap));
+      const local = want[i].lerpVectors(rest[i], tailSleep[i], Math.max(sleep, wrap));
       if (lie > 0 && i === 0) local.lerp(TAIL_ROOT_LIE, lie);
       if (thump > 0) {
         tmpTail.copy(tailThump[i]);
@@ -1168,7 +1308,7 @@
     // slow sweep from side to side and a curl that grows towards the tip, both starting at the
     // root and travelling out. Lying, the sweep is smaller and the tip does most of the moving.
     const g = chainGoal, amp = sway * (1 - 0.45 * lie), tip = amp + 0.6 * lie * (1 - sleep);
-    const hips = lie > 0 && (lying.tailWag || lying.tailExtend) ? frameAt(TAIL_ROOT_LIE.y) : null;
+    const hips = !dog && lie > 0 && (lying.tailWag || lying.tailExtend) ? frameAt(TAIL_ROOT_LIE.y) : null;
     const leftSweep = hips ? Math.max(0, lying.tailWag) / (Math.PI / 2) : 0;
     tailWant.getPointAt(0, g[0]);
     bendQ.identity();
@@ -1177,10 +1317,15 @@
       tailWant.getPointAt((i - 1) / TAIL_N, linkA);
       tailWant.getPointAt(w, linkB);
       linkDir.subVectors(linkB, linkA).normalize();
-      bendQ.premultiply(bendStep.setFromAxisAngle(Y_UP, 0.05 * amp * (1 - 0.6 * lie) * Math.sin(time * 1.6 - i * 0.45)));
-      bendAxis.crossVectors(linkDir, Y_UP);
-      if (bendAxis.lengthSq() < 1e-4) bendAxis.set(0, 0, 1);
-      bendQ.premultiply(bendStep.setFromAxisAngle(bendAxis.normalize(), 0.06 * tip * w * w * Math.sin(time * 1.3 - i * 0.6)));
+      if (dog) {
+        // Swing every link at the base frequency, with a small delay out towards the tip.
+        bendQ.setFromAxisAngle(Y_UP, 0.76 * wag * Math.sin(time - 0.55 * w) * mix(0.78, 1, w));
+      } else {
+        bendQ.premultiply(bendStep.setFromAxisAngle(Y_UP, 0.05 * amp * (1 - 0.6 * lie) * Math.sin(time * 1.6 - i * 0.45)));
+        bendAxis.crossVectors(linkDir, Y_UP);
+        if (bendAxis.lengthSq() < 1e-4) bendAxis.set(0, 0, 1);
+        bendQ.premultiply(bendStep.setFromAxisAngle(bendAxis.normalize(), 0.06 * tip * w * w * Math.sin(time * 1.3 - i * 0.6)));
+      }
       linkDir.applyQuaternion(bendQ);
       if (hips) {
         const tipWeight = smooth(0.6, 0.90, w);
@@ -1199,7 +1344,7 @@
           linkDir.lerp(bendAxis, 0.90 * leftSweep ** 1.5 * smooth(0.18, 0.65, w)).normalize();
         }
       }
-      g[i].copy(g[i - 1]).addScaledVector(linkDir, LINK);
+      g[i].copy(g[i - 1]).addScaledVector(linkDir, link);
     }
 
     // The links: pulled towards their places (harder near the root), carrying on with what speed
@@ -1215,7 +1360,7 @@
         linkA.subVectors(q, chainPrev[i]).multiplyScalar(keep);
         chainPrev[i].copy(q);
         q.add(linkA).lerp(g[i], 1 - Math.pow(1 - mix(0.5, 0.17, i / TAIL_N), f));
-        q.sub(chain[i - 1]).setLength(LINK).add(chain[i - 1]);
+        q.sub(chain[i - 1]).setLength(link).add(chain[i - 1]);
         if (q.y < 0.05) q.y = 0.05;
       }
     }
@@ -1225,7 +1370,9 @@
       pts[i].copy(chain[i]);
       if (reach > 0) pts[i].lerp(tailWant.getPointAt(i / TAIL_N, linkA), reach);
     }
-    tail.update((t, out) => tailCurve.getPoint(t, out), t => mix(0.085, 0.068, t) + 0.014 * K.smooth(0.8, 1, t));
+    tail.update((t, out) => tailCurve.getPoint(t, out), dog
+      ? t => mix(0.083, dog.tailRadius, smooth(0, 0.42, t)) * Math.sqrt(1 - 0.985 * smooth(0.54, 1, t) ** 2)
+      : t => mix(0.085, 0.068, t) + 0.014 * smooth(0.8, 1, t));
   }
 
   // Catchlight dots per style: [x (outer side +), y, radius].
@@ -1251,26 +1398,36 @@
   function setLook(o) {
     Object.assign(look, o);
     const c = COATS[look.coat] || COATS.black;
+    const breed = K.dogBreeds.get(look.coat) ?? null;
+    if (breed !== dog) chainFresh = true;
+    dog = breed;
     const striped = c.tabby && (look.pattern === 'tabby' || (look.pattern === 'auto' && c.striped));
     const solid = look.style === '3d';
     coat.cheek = c.cheek || 0;
     K.setFur({ ...c, dark: c.tabby || c.dark || c.fur, stripes: striped ? 1 : 0, softPoints: look.softPoints ? 1 : 0, shade: solid ? c.shade : 0 });
     // Big ears lean further out, set low and wide on the head as a Devon's are.
-    for (const e of ears) placeEar(e, c.ears || 1);
-    head.scale.x = c.headWidth || 1;
+    for (const e of ears) placeEar(e, dog?.ears ?? c.ears ?? 1);
+    for (const a of arms) {
+      if (dog) a.shoulderLocal.set(a.s * dog.shoulder.x, dog.shoulder.y, dog.shoulder.z);
+      else a.shoulderLocal.set(a.s * 0.27, 0.94, 0.22);
+    }
+    head.scale.set(dog?.headWidth ?? c.headWidth ?? 1, dog?.headHeight ?? 1, 1);
+    const dogHeadGeo = dogHeadGeos[dog?.headProfile];
+    headMesh.geometry = headRim.geometry = chinLine.geometry = dogHeadGeo ?? headGeo;
     K.mouseProp.setStyle(look.style);
     K.mouseProp.setCable(look.cable !== false);
     K.keyboard.setTheme(look.board);
     K.renderer.domElement.style.opacity = K.clamp(Number(look.opacity) || 1, 0.3, 1);
     chinLine.visible = !solid;
     chinMat.uniforms.uColor.value.set(c.ink || c.arm);
+    chinMat.uniforms.uWidth.value = dogHeadGeo ? 0.022 : 0.05;
     rimMat.color.set(c.rim);
     armRimMat.color.set(c.arm);
     const glove = GLOVES[look.gloves] || c;
     pawMat.color.set(glove.paw);
     padMat.color.set(c.pad || '#f19aa6');
     toeMat.color.set(glove.toe);
-    whiskerMat.color.set(c.whisker);
+    whiskerMat.color.set(c.whisker || c.fur);
     noseMat.color.set(c.nose || c.fur);
     mouthMat.color.set(c.mouth || c.fur);
     face.visible = !!c.nose;
@@ -1278,15 +1435,33 @@
     eyeMats[0].color.set(EYES[eye === 'odd' ? 'blue' : eye] || EYES.gold);
     eyeMats[1].color.set(EYES[eye === 'odd' ? 'gold' : eye] || EYES.gold);
     lidMat.color.set(c.lid || eyeMats[0].color);
+    const eyeShape = dog?.eyes;
+    pupilMat.color.set(eyeShape?.pupil ?? '#141414');
+    const dots = look.shine === 'classic' && eyeShape?.catchlights ? eyeShape.catchlights : SHINES[look.shine] || SHINES.classic;
     for (const e of eyes) {
+      e.group.position.copy(e.rest);
+      e.group.quaternion.copy(e.restTurn);
+      if (eyeShape) {
+        const { x, y, z } = eyeShape.at;
+        e.group.position.set(e.s * x, y, z);
+        const normal = V(e.s * x / R.x ** 2, y / R.y ** 2, z / R.z ** 2).normalize();
+        e.group.quaternion.setFromUnitVectors(EYE_FRONT, normal);
+        e.group.rotateZ(e.s * eyeShape.tilt);
+      }
+      e.coatTurn.copy(e.group.quaternion);
       e.iris.scale.y = c.irisHeight || IRIS_HEIGHT;
-      const dots = SHINES[look.shine] || SHINES.classic;
+      e.aperture.value.y = e.iris.scale.y;
       e.shine.children.forEach((d, i) => {
         d.visible = i < dots.length;
-        if (d.visible) { d.position.set(e.s * dots[i][0], dots[i][1], 0.004); d.scale.set(dots[i][2], dots[i][2], 1); }
+        if (d.visible) {
+          const [x, y, radius] = dots[i];
+          d.position.set(e.s * x, y, 0.004);
+          d.scale.set(radius, radius, 1);
+        }
       });
     }
-    for (const w of whiskers) w.visible = look.whiskers;
+    for (const w of whiskers) w.visible = !dog && look.whiskers;
+    dogFace.setBreed(dog, c);
     if (look.collar in COLLARS) collarMat.color.set(COLLARS[look.collar]);
     setOutfit(outfit.kind);
   }
@@ -1304,6 +1479,12 @@
 
   // The head rides on the bent neck; called after `bend` changes.
   const NECK = headPivot.position.clone();
+  // Invert the sitting spine offsets so the whole neck can reach a target with the muzzle.
+  function neckBend(target, out) {
+    const weight = spineWeight(NECK.y);
+    return out.set((target.x - HOME.x - NECK.x) / weight, (NECK.y - target.y) / (NECK.y * sink(NECK.y)),
+      (target.z - HOME.z - NECK.z * (dog?.bodyDepth ?? 1)) / weight);
+  }
   function placeHead(followSpine) {
     place(NECK.x, NECK.y, NECK.z, headPivot.position);
     if (followSpine) {
@@ -1318,13 +1499,16 @@
 
   K.cat = {
     body, home: HOME, headPivot, head, ears, eyes, whiskers, hind, arms, blushMat,
-    bend, bendBody, attach, placeHead, placeCollar, lying, frameAt, lieAt, NECK_S: NECK.y,
+    bend, bendBody, neckBend, attach, placeHead, placeCollar, lying, frameAt, lieAt, NECK_S: NECK.y,
     // World position of the tail tip (for the thump effects).
     tailTip: out => tailCurve.getPoint(1, out),
     tailPoints: tailCurve.points,
-    petMeshes: [headMesh, ...ears.map(e => e.mesh)],
+    petMeshes: [headMesh, ...ears.map(e => e.mesh), dogFace.muzzle],
     dragMeshes: [bodyMesh, tail.body, ...arms.flatMap(a => [a.limb.body, a.paw]), ...hind],
-    updateArm, updateTail, turnEar, setLook, look, coat, setYawn, setLick, kickHind, setOutfit, outfit, setLid,
+    updateArm, updateTail, turnEar, setEarFold, setLook, look, coat, setYawn, setLick, kickHind, setOutfit, outfit, setLid,
+    get dog() { return dog; },
+    updateDogFace: dogFace.update,
+    dogBiteOffset: out => dogFace.biteOffset(out).multiply(head.scale).add(head.position),
     swingScarf: swingEnd,
     // The collar ring, the outline of the body, at a given height (for placing things on the chest).
     radiusAt,

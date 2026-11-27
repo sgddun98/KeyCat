@@ -962,6 +962,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ("德文卷毛猫", json!("devon")),
         ("美短银虎斑", json!("silver")),
         ("狸花猫", json!("lihua")),
+        ("哈士奇", json!("husky")),
+        ("柯基", json!("corgi")),
+        ("阿拉斯加", json!("malamute")),
+        ("金毛", json!("goldenRetriever")),
+        ("萨摩耶", json!("samoyed")),
+        ("腊肠犬", json!("dachshund")),
+        ("边牧", json!("borderCollie")),
     ];
     // Things to do first, then the settings in three groups (the cat, the desk, its habits), then
     // window and app items. Same order and wording as the mac menu.
@@ -971,7 +978,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         action(app, "record", "拍一张动图（3 秒）")?,
         separator(app)?,
     ];
-    let mut look = vec![submenu(app, "毛色", choice(app, "coat", &json!(coat), &coats)?)?];
+    let mut look = vec![submenu(app, "形象", choice(app, "coat", &json!(coat), &coats)?)?];
     // Only coats whose stripes would show get the choice; black and white stay plain.
     if coat == "orange" || coat == "grey" {
         let striped = s.pattern == "tabby" || (s.pattern == "auto" && coat == "orange");
@@ -1029,7 +1036,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             ("薄荷", json!("mint")),
         ])?)?,
         toggle(app, "鼠标线", "mouseCable", s.mouse_cable)?,
-        toggle(app, "桌上的杯子（它会推下去）", "cup", s.cup)?,
+        toggle(app, "桌面道具（它会推下去）", "cup", s.cup)?,
         submenu(app, "透明度", choice(app, "opacity", &json!(s.opacity), &[
             ("不透明", json!(1.0)),
             ("85%", json!(0.85)),
@@ -1050,7 +1057,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     ])?);
     items.push(submenu(app, "第二只猫", vec![
         check(app, "cat2".into(), "陪着它", s.second_cat)?,
-        submenu(app, "它的毛色", choice(app, "cat2.coat", &json!(s.coat2), &coats)?)?,
+        submenu(app, "它的形象", choice(app, "cat2.coat", &json!(s.coat2), &coats)?)?,
         submenu(app, "怎么相处", choice(app, "pairMode", &json!(s.pair_mode), &[
             ("一起玩（各有键盘鼠标，会互相打闹）", json!("play")),
             ("分工（一只打字，一只管鼠标）", json!("split")),

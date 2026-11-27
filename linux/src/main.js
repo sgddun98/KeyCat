@@ -585,6 +585,13 @@ const COATS = [
   ['德文卷毛猫', 'devon'],
   ['美短银虎斑', 'silver'],
   ['狸花猫', 'lihua'],
+  ['哈士奇', 'husky'],
+  ['柯基', 'corgi'],
+  ['阿拉斯加', 'malamute'],
+  ['金毛', 'goldenRetriever'],
+  ['萨摩耶', 'samoyed'],
+  ['腊肠犬', 'dachshund'],
+  ['边牧', 'borderCollie'],
 ];
 
 const separator = { type: 'separator' };
@@ -644,7 +651,7 @@ function buildMenu() {
     action('拍一张动图（3 秒）', () => jsTo(PANEL, 'cat.record(3)')),
     separator,
   ];
-  const look = [submenu('毛色', choice('coat', coat, COATS))];
+  const look = [submenu('形象', choice('coat', coat, COATS))];
   // Only coats whose stripes would show get the choice; black and white stay plain.
   if (coat === 'orange' || coat === 'grey') {
     const striped = s.pattern === 'tabby' || (s.pattern === 'auto' && coat === 'orange');
@@ -681,7 +688,7 @@ function buildMenu() {
   items.push(submenu('桌面', [
     submenu('键盘颜色', choice('keyboardColor', s.keyboardColor, [['奶白', 'cream'], ['黑灰', 'dark'], ['樱粉', 'pink'], ['薄荷', 'mint']])),
     toggle('鼠标线', 'mouseCable', s.mouseCable),
-    toggle('桌上的杯子（它会推下去）', 'cup', s.cup),
+    toggle('桌面道具（它会推下去）', 'cup', s.cup),
     submenu('透明度', choice('opacity', s.opacity, [['不透明', 1], ['85%', 0.85], ['70%', 0.7], ['55%', 0.55]])),
   ]));
   items.push(submenu('习性', [
@@ -691,7 +698,7 @@ function buildMenu() {
   ]));
   items.push(submenu('第二只猫', [
     check('陪着它', s.secondCat, () => setSecondCat(!s.secondCat)),
-    submenu('它的毛色', choice('cat2.coat', s.coat2, COATS)),
+    submenu('它的形象', choice('cat2.coat', s.coat2, COATS)),
     submenu('怎么相处', choice('pairMode', s.pairMode, [
       ['一起玩（各有键盘鼠标，会互相打闹）', 'play'],
       ['分工（一只打字，一只管鼠标）', 'split'],

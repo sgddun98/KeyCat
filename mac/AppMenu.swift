@@ -9,7 +9,9 @@ final class MenuAction: NSObject {
 let coatOptions = [("黑猫", "black"), ("奶牛猫", "tuxedo"), ("橘猫", "orange"), ("蓝灰猫", "grey"),
                    ("英短蓝金渐层", "britishBlueGolden"),
                    ("白猫", "white"), ("三花猫", "calico"), ("暹罗猫", "siamese"), ("布偶猫", "ragdoll"),
-                   ("德文卷毛猫", "devon"), ("美短银虎斑", "silver"), ("狸花猫", "lihua")]
+                   ("德文卷毛猫", "devon"), ("美短银虎斑", "silver"), ("狸花猫", "lihua"),
+                   ("哈士奇", "husky"), ("柯基", "corgi"), ("阿拉斯加", "malamute"),
+                   ("金毛", "goldenRetriever"), ("萨摩耶", "samoyed"), ("腊肠犬", "dachshund"), ("边牧", "borderCollie")]
 /// Coats with colourpoints (dark face, ears, legs and tail), which get the soft-points choice.
 let pointCoats: Set = ["siamese", "ragdoll"]
 
@@ -69,7 +71,7 @@ extension AppDelegate {
             submenu("键盘颜色", [("奶白", "cream"), ("黑灰", "dark"), ("樱粉", "pink"), ("薄荷", "mint")],
                     selected: keyboardColor) { $0.keyboardColor = $1 },
             toggle("鼠标线", mouseCable) { $0.mouseCable.toggle() },
-            toggle("桌上的杯子（它会推下去）", cup) { $0.cup.toggle() },
+            toggle("桌面道具（它会推下去）", cup) { $0.cup.toggle() },
             submenu("透明度", [("不透明", 1.0), ("85%", 0.85), ("70%", 0.7), ("55%", 0.55)] as [(String, Double)],
                     selected: opacity) { $0.opacity = $1 },
         ]))
@@ -99,7 +101,7 @@ extension AppDelegate {
 
     /// The cat itself: coat and size first, then the details.
     private func lookItems() -> [NSMenuItem] {
-        var items = [submenu("毛色", coatOptions, selected: coat) { $0.coat = $1 }]
+        var items = [submenu("形象", coatOptions, selected: coat) { $0.coat = $1 }]
         // Only coats whose stripes would show get the choice; black and white stay plain.
         if coat == "orange" || coat == "grey" {
             let striped = pattern == "tabby" || (pattern == "auto" && coat == "orange")
@@ -142,7 +144,7 @@ extension AppDelegate {
         let parent = NSMenuItem(title: "第二只猫", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         sub.addItem(toggle("陪着它", secondCat) { $0.setSecondCat(!$0.secondCat) })
-        sub.addItem(submenu("它的毛色", coatOptions, selected: coat2) { $0.coat2 = $1 })
+        sub.addItem(submenu("它的形象", coatOptions, selected: coat2) { $0.coat2 = $1 })
         sub.addItem(submenu("怎么相处", [("一起玩（各有键盘鼠标，会互相打闹）", "play"), ("分工（一只打字，一只管鼠标）", "split")],
                             selected: pairMode) { $0.pairMode = $1 })
         parent.submenu = sub

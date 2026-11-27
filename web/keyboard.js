@@ -306,9 +306,15 @@
   // to push off the edge. It has a dark ink line and a blue body. The handle faces out to the left,
   // so its loop shows in silhouette, and steam curls up while it sits there. Fades so it can fall
   // out of sight and come back later.
-  const cup = new THREE.Group();
+  const deskProp = new THREE.Group();
+  const cup = new THREE.Group(), bowl = new THREE.Group(), bone = new THREE.Group();
   const CUP_HOME = V(-1.0, 0.02, -0.28);
-  cup.position.copy(CUP_HOME);
+  const BOWL_HOME = V(-1.18, 0.02, -0.29), BONE_AT = V(0.048, 0.140, -0.028), BONE_SCALE = 0.95;
+  const BOWL_WIDTH = 1.12;
+  const BONE_TILT = new THREE.Euler(0, 0.72, 0.25, 'YXZ');
+  const boneParentTurn = new THREE.Quaternion();
+  deskProp.position.copy(CUP_HOME);
+  deskProp.add(cup, bowl);
   const steam = [];
   {
     const fade = m => Object.assign(m, { transparent: true });
@@ -358,23 +364,108 @@
       steam.push({ tube, x, phase: x > 0 ? 1.7 : 0 });
     }
     cup.userData.mats = [mugMat, lipMat, inkMat, coffeeMat, cremaMat, printMat];
-    cup.userData.hitMesh = mug;
     cup.userData.top = H_CUP;
   }
-  K.scene.add(cup);
+  {
+    // A rounded ceramic bowl with a contrasting inside and a low, wide foot.
+    const profile = [
+      [0, 0.005, '#568585'], [0.185, 0.005, '#568585'], [0.225, 0.012, '#568585'],
+      [0.239, 0.027, '#75a7a4'], [0.223, 0.05, '#92c5ba'], [0.213, 0.093, '#9bccbf'],
+      [0.221, 0.149, '#a8d6c9'], [0.216, 0.155, '#d7eee0'], [0.205, 0.146, '#dfefe1'],
+      [0.191, 0.117, '#c5dfd1'], [0.177, 0.076, '#a6c9bb'], [0.145, 0.052, '#a0c3b6'],
+      [0, 0.048, '#a0c3b6'],
+    ];
+    const pottery = new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), 48);
+    pottery.scale(BOWL_WIDTH, 1, BOWL_WIDTH);
+    const colors = [];
+    const color = new THREE.Color();
+    for (let i = 0; i < pottery.attributes.position.count; i++) {
+      color.set(profile[i % profile.length][2]);
+      colors.push(color.r, color.g, color.b);
+    }
+    pottery.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const ceramic = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true });
+    const printMat = Object.assign(K.flat('#edf6e8'), { transparent: true });
+    const print = new THREE.Group();
+    print.position.set(0, 0.089, 0.217 * BOWL_WIDTH);
+    print.scale.x = BOWL_WIDTH;
+    for (const [x, y, rx, ry] of [[0, -0.014, 0.026, 0.015], [-0.025, 0.008, 0.009, 0.010],
+      [0, 0.017, 0.009, 0.011], [0.025, 0.008, 0.009, 0.010]]) {
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(1, 16), printMat);
+      dot.position.set(x, y, 0);
+      dot.scale.set(rx, ry, 1);
+      print.add(dot);
+    }
+    bowl.add(new THREE.Mesh(pottery, ceramic), print, bone);
+
+    // Two rounded knuckles at each end, joined by a narrow shaft.
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.14, 0.047);
+    shape.bezierCurveTo(-0.173, 0.047, -0.16, 0.112, -0.215, 0.112);
+    shape.bezierCurveTo(-0.267, 0.112, -0.272, 0.026, -0.23, 0);
+    shape.bezierCurveTo(-0.272, -0.026, -0.267, -0.112, -0.215, -0.112);
+    shape.bezierCurveTo(-0.16, -0.112, -0.173, -0.047, -0.14, -0.047);
+    shape.lineTo(0.14, -0.047);
+    shape.bezierCurveTo(0.173, -0.047, 0.16, -0.112, 0.215, -0.112);
+    shape.bezierCurveTo(0.267, -0.112, 0.272, -0.026, 0.23, 0);
+    shape.bezierCurveTo(0.272, 0.026, 0.267, 0.112, 0.215, 0.112);
+    shape.bezierCurveTo(0.16, 0.112, 0.173, 0.047, 0.14, 0.047);
+    shape.closePath();
+    const top = K.flat('#ffefd3'), sides = K.flat('#c89b73');
+    bowl.userData.mats = [ceramic, printMat, top, sides];
+    top.transparent = sides.transparent = true;
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: 0.041, bevelSize: 0.012, bevelThickness: 0.015, bevelSegments: 3, curveSegments: 10,
+    }).rotateX(-Math.PI / 2).translate(0, 0.015, 0);
+    bone.add(new THREE.Mesh(geometry, [top, sides]));
+    bone.position.copy(BONE_AT);
+    bone.rotation.copy(BONE_TILT);
+    bone.scale.setScalar(BONE_SCALE);
+    bowl.visible = false;
+  }
+  K.scene.add(deskProp);
+  const cupContact = V(0.105, 0.12, 0.105);
+  const bowlContact = V(0.199 * BOWL_WIDTH, 0.093, 0.09 * BOWL_WIDTH);
   K.cup = {
-    group: cup,
+    group: deskProp,
     home: CUP_HOME,
-    radius: 0.15,
-    hitMeshes: [cup.userData.hitMesh],
+    contact: cupContact,
     opacity: 1,
+    get hasBone() { return bone.visible; },
+    get boneAmount() { return bone.scale.x / BONE_SCALE; },
+    bonePose(position, rotation) {
+      bone.getWorldPosition(position);
+      bone.getWorldQuaternion(rotation);
+    },
+    setBonePose(position, rotation) {
+      bowl.worldToLocal(bone.position.copy(position));
+      bowl.getWorldQuaternion(boneParentTurn);
+      bone.quaternion.copy(boneParentTurn.invert()).multiply(rotation);
+    },
+    resetBonePose() {
+      bone.position.copy(BONE_AT);
+      bone.rotation.copy(BONE_TILT);
+    },
+    setBone(amount) {
+      bone.visible = amount > 0;
+      bone.scale.setScalar(BONE_SCALE * amount);
+    },
+    setDog(isDog) {
+      if (bowl.visible === isDog) return;
+      cup.visible = !isDog;
+      bowl.visible = isDog;
+      this.home = isDog ? BOWL_HOME : CUP_HOME;
+      this.contact = isDog ? bowlContact : cupContact;
+      this.setOpacity(this.opacity);
+    },
     setOpacity(a) {
       this.opacity = a;
-      for (const m of cup.userData.mats) m.opacity = a;
-      cup.visible = a > 0.01;
+      for (const m of (bowl.visible ? bowl : cup).userData.mats) m.opacity = a;
+      deskProp.visible = a > 0.01;
     },
     // Moves the steam; `calm` 0 hides it (the cup is sliding or falling).
     update(t, calm = 1) {
+      if (!cup.visible) return;
       for (const s of steam) {
         const life = (t * 0.45 + s.phase) % 1;
         s.tube.mesh.material.opacity = 0.8 * Math.sin(life * Math.PI) * calm * this.opacity;
